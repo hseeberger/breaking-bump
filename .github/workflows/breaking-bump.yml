@@ -1,0 +1,107 @@
+name: Breaking Bump
+
+on:
+  workflow_call:
+    inputs:
+      nightly:
+        description: Nightly toolchain that generates the rustdoc JSON, e.g. nightly-2026-11-09
+        required: true
+        type: string
+    secrets:
+      app-client-id:
+        description: Client ID of the GitHub App that marks Dependabot pull requests
+        required: false
+      app-private-key:
+        description: Private key of that GitHub App
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      result: ${{ steps.check.outputs.result }}
+      violations: ${{ steps.check.outputs.violations }}
+      head: ${{ steps.check.outputs.head }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Read the breaking-bump version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ job.workflow_repository }}
+          SHA: ${{ job.workflow_sha }}
+        run: |
+          version=$(gh api "repos/$REPOSITORY/contents/Cargo.toml?ref=$SHA" \
+            -H "Accept: application/vnd.github.raw" \
+            | sed -nE 's/^version *= *"([^"]+)"/\1/p' | head -1)
+          test -n "$version"
+          echo "version=$version" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: ${{ inputs.nightly }}
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          prefix-key: breaking-bump
+
+      - name: Install breaking-bump
+        env:
+          NIGHTLY: ${{ inputs.nightly }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          cargo "+$NIGHTLY" install cargo-breaking-bump --version "$VERSION" --locked
+
+      - name: Check
+        id: check
+        env:
+          NIGHTLY: ${{ inputs.nightly }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          cargo "+$NIGHTLY" breaking-bump check --base "$BASE" --head "$HEAD"
+
+  mark:
+    name: Mark
+    needs: check
+    if: >-
+      ${{ !cancelled()
+      && needs.check.outputs.violations == 'missing-marker'
+      && github.event.pull_request.user.login == 'dependabot[bot]' }}
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Generate a token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.app-client-id }}
+          private-key: ${{ secrets.app-private-key }}
+
+      - name: Install breaking-bump
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          cargo install cargo-breaking-bump --version "$VERSION" --locked
+
+      - name: Mark
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD: ${{ needs.check.outputs.head }}
+        run: |
+          cargo breaking-bump mark --pr "$PR" --head "$HEAD"
