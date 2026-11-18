@@ -130,7 +130,8 @@ breaking-bump:
     app-private-key: ${{ secrets.APP_PRIVATE_KEY }}
 ```
 
-The check job gets no secrets and only `contents: read`. It installs the version of breaking-bump
+If the build needs tools beyond Rust, such as `protoc`, pass them as `tools`, comma-separated, to
+be installed with taiki-e/install-action. The check job gets no secrets and only `contents: read`. It installs the version of breaking-bump
 that `Cargo.toml` declares at the workflow's own commit, so pinning the workflow also pins the
 tool. The mark job uses a token of a GitHub App with "Contents: write" and "Pull requests: write",
 which also makes the marked commit start CI again. For Dependabot pull requests, the two secrets
