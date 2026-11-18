@@ -38,11 +38,7 @@ fn main() -> ExitCode {
 #[derive(Parser)]
 #[command(name = "cargo", bin_name = "cargo")]
 enum Cli {
-    #[command(
-        name = "breaking-bump",
-        version,
-        about = "Detect semver-incompatible bumps of dependencies in the public API of Rust crates"
-    )]
+    #[command(name = "breaking-bump", version, about)]
     BreakingBump(BreakingBump),
 }
 

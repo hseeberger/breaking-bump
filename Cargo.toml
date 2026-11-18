@@ -8,6 +8,7 @@ readme      = "README.md"
 repository  = "https://github.com/hseeberger/breaking-bump"
 keywords    = [ "cargo", "semver", "dependencies", "breaking-change" ]
 categories  = [ "development-tools::cargo-plugins" ]
+include     = [ "src/**", "tests/**", "README.md", "LICENSE", "CHANGELOG.md" ]
 publish     = true
 
 [dependencies]
