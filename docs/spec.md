@@ -73,6 +73,8 @@ If a `Cargo.toml` in the working tree has uncommitted changes, `check` warns abo
   changed requirement that is not a plain caret requirement makes the result `undecided`.
 - Only crates with an incompatible bump are documented with rustdoc. A pull request that changes
   no `Cargo.toml` needs no rustdoc run.
+- rustdoc runs with all features of the crate enabled, so optional dependencies are checked. A
+  crate that does not build with all features makes the result `error`.
 - A bump is breaking when an item that is public in both commits now comes from an incompatible
   version of the bumped dependency, or of a crate reached through it. Each item is mapped to the
   exact package version that defines it. A crate that cannot be mapped makes the result
@@ -201,7 +203,8 @@ A reusable workflow in the breaking-bump repository contains both jobs, so a rep
 instead of copying them:
 
 - The check job checks out the pull request, installs the given nightly and the version of
-  breaking-bump that `Cargo.toml` declares at the workflow's own commit, and runs `check`. It gets no secrets and only `contents: read`.
+  breaking-bump that `Cargo.toml` declares at the workflow's own commit, and runs `check`. It
+  gets no secrets and only `contents: read`.
 - The mark job runs only when the check reports `missing-marker` as its only kind of violation and
   the pull request comes from Dependabot. It gets a GitHub App token, which also makes the new
   commit start CI again. It never checks out the pull request.
@@ -238,6 +241,8 @@ It must also say:
 
 - With squash merges, `check` cannot see the final commit message, so `require-marker` only
   covers merge commits and rebase merges.
+- A crate whose features exclude each other cannot be checked, because rustdoc runs with all
+  features enabled.
 - Dependabot no longer rebases a pull request that `mark` changed. Comment `@dependabot recreate`
   instead: Dependabot rebuilds the commit unmarked, and the workflow marks it again.
 
