@@ -45,46 +45,47 @@ pub(crate) enum Refusal {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Preconditions {
-    Met {
-        message: String,
-        parent: String,
-        title: Option<String>,
-    },
+pub(crate) enum PullRequestState {
+    Ready,
     Moved,
     Refused(Refusal),
 }
 
-pub(crate) fn preconditions<B>(
-    bot: &B,
-    pull_request: &PullRequest,
-    commit: &Commit,
-    examined: &str,
-) -> Preconditions
-where
-    B: Bot,
-{
-    check(bot, pull_request, commit, examined).unwrap_or_else(Preconditions::Refused)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Marking {
+    pub(crate) message: String,
+    pub(crate) parent: String,
+    pub(crate) title: Option<String>,
 }
 
-fn check<B>(
+pub(crate) fn pull_request_state<B>(
     bot: &B,
     pull_request: &PullRequest,
-    commit: &Commit,
     examined: &str,
-) -> Result<Preconditions, Refusal>
+) -> PullRequestState
 where
     B: Bot,
 {
     if !bot.is_author(&pull_request.author) {
-        return Err(Refusal::NotFromBot(pull_request.author.clone()));
+        return PullRequestState::Refused(Refusal::NotFromBot(pull_request.author.clone()));
     }
     if pull_request.head_repository.as_deref() != Some(pull_request.base_repository.as_str()) {
-        return Err(Refusal::FromFork);
+        return PullRequestState::Refused(Refusal::FromFork);
     }
     if pull_request.head != examined {
-        return Ok(Preconditions::Moved);
+        return PullRequestState::Moved;
     }
+    PullRequestState::Ready
+}
+
+pub(crate) fn marking<B>(
+    bot: &B,
+    pull_request: &PullRequest,
+    commit: &Commit,
+) -> Result<Marking, Refusal>
+where
+    B: Bot,
+{
     let [parent] = commit.parents.as_slice() else {
         return Err(Refusal::NotSingleParent(commit.parents.len()));
     };
@@ -96,7 +97,7 @@ where
     if !changes_manifest {
         return Err(Refusal::NoManifest);
     }
-    Ok(Preconditions::Met {
+    Ok(Marking {
         message: bot.marked_message(&commit.message)?,
         parent: parent.clone(),
         title: bot.marked_title(&pull_request.title)?,
@@ -107,38 +108,43 @@ where
 mod tests {
     use crate::domain::{
         bot::Dependabot,
-        pull_request::{Commit, Preconditions, PullRequest, Refusal, preconditions},
+        pull_request::{
+            Commit, Marking, PullRequest, PullRequestState, Refusal, marking, pull_request_state,
+        },
     };
 
     #[test]
-    fn met() {
+    fn ready_and_marked() {
         assert_eq!(
-            preconditions(&Dependabot, &pull_request(), &commit(), "head"),
-            Preconditions::Met {
+            pull_request_state(&Dependabot, &pull_request(), "head"),
+            PullRequestState::Ready
+        );
+        assert_eq!(
+            marking(&Dependabot, &pull_request(), &commit()),
+            Ok(Marking {
                 message: "build(deps)!: bump dep".to_owned(),
                 parent: "parent".to_owned(),
                 title: Some("build(deps)!: bump dep".to_owned()),
-            }
+            })
         );
     }
 
     #[test]
     fn moved() {
         assert_eq!(
-            preconditions(&Dependabot, &pull_request(), &commit(), "older"),
-            Preconditions::Moved
+            pull_request_state(&Dependabot, &pull_request(), "older"),
+            PullRequestState::Moved
         );
     }
 
     #[test]
-    fn refused() {
+    fn refused_pull_requests() {
         let cases = [
             (
                 PullRequest {
                     author: "someone".to_owned(),
                     ..pull_request()
                 },
-                commit(),
                 Refusal::NotFromBot("someone".to_owned()),
             ),
             (
@@ -146,7 +152,6 @@ mod tests {
                     head_repository: Some("fork/repo".to_owned()),
                     ..pull_request()
                 },
-                commit(),
                 Refusal::FromFork,
             ),
             (
@@ -154,9 +159,20 @@ mod tests {
                     head_repository: None,
                     ..pull_request()
                 },
-                commit(),
                 Refusal::FromFork,
             ),
+        ];
+        for (pull_request, refusal) in cases {
+            assert_eq!(
+                pull_request_state(&Dependabot, &pull_request, "head"),
+                PullRequestState::Refused(refusal)
+            );
+        }
+    }
+
+    #[test]
+    fn refused_commits() {
+        let cases = [
             (
                 pull_request(),
                 Commit {
@@ -191,10 +207,7 @@ mod tests {
             ),
         ];
         for (pull_request, commit, refusal) in cases {
-            assert_eq!(
-                preconditions(&Dependabot, &pull_request, &commit, "head"),
-                Preconditions::Refused(refusal)
-            );
+            assert_eq!(marking(&Dependabot, &pull_request, &commit), Err(refusal));
         }
     }
 

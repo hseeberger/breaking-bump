@@ -134,6 +134,36 @@ fn only_the_bump_that_reaches_the_changed_version_is_blamed() {
 }
 
 #[test]
+fn each_bump_gets_only_the_changes_it_explains() {
+    let mut fixture = Fixture::with(Options {
+        keep_dep_c_1: true,
+        ..Options::default()
+    });
+    let base = fixture.head();
+    fixture.dep_b_uses_dep_c_2 = true;
+    fixture.dep_keep_uses_dep_c_3 = true;
+    fixture.versions.insert("dep_keep", "2.0.0".to_owned());
+    let head = fixture.bump("dep_b", "2.0.0", "build(deps): bump dep_b and dep_keep");
+    let run = fixture.check(&base, &head);
+    run.assert(1, "breaking", "missing-marker");
+    let finding = |dependency: &str| {
+        run.stdout
+            .lines()
+            .find(|line| line.contains(&format!("bumping {dependency} from")))
+            .unwrap_or_else(|| panic!("no finding for {dependency}: {run}"))
+            .to_owned()
+    };
+    let dep_b = finding("dep_b");
+    assert!(dep_b.contains("from 1.0.0 to 2.0.0"), "{run}");
+    assert!(dep_b.contains("subject::transitive"), "{run}");
+    assert!(!dep_b.contains("subject::kept"), "{run}");
+    let dep_keep = finding("dep_keep");
+    assert!(dep_keep.contains("from 1.0.0 to 3.0.0"), "{run}");
+    assert!(dep_keep.contains("subject::kept"), "{run}");
+    assert!(!dep_keep.contains("subject::transitive"), "{run}");
+}
+
+#[test]
 fn bumps_that_are_not_breaking() {
     for (name, version) in [
         ("dep_private", "2.0.0"),
