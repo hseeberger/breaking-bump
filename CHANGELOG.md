@@ -1,14 +1,17 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [Unreleased]
-
 ## [0.1.1](https://github.com/hseeberger/breaking-bump/compare/v0.1.0...v0.1.1) - 2026-11-18
 
-### Added
+### Features
 
-- install extra tools in the reusable workflow
+- Install extra tools in the reusable workflow ([#5](https://github.com/hseeberger/breaking-bump/pull/5))
+
+## [0.1.0](https://github.com/hseeberger/breaking-bump/releases/tag/v0.1.0) - 2026-11-18
+
+### Features
+
+- Initial version of breaking-bump
+
+### Bug Fixes
+
+- Tighten bump attribution, library filter and moved-head handling ([#3](https://github.com/hseeberger/breaking-bump/pull/3))
