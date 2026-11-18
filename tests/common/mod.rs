@@ -128,6 +128,7 @@ pub struct Fixture {
     pub versions: BTreeMap<&'static str, String>,
     pub description: String,
     pub dep_b_uses_dep_c_2: bool,
+    pub dep_keep_uses_dep_c_3: bool,
     pub settings: Option<String>,
     options: Options,
 }
@@ -162,6 +163,7 @@ impl Fixture {
             versions,
             description: "subject".to_owned(),
             dep_b_uses_dep_c_2: false,
+            dep_keep_uses_dep_c_3: false,
             settings: None,
             options,
         };
@@ -216,7 +218,14 @@ impl Fixture {
                     };
                     format!("[dependencies]\ndep_c = {{ path = \"{dep_c}\" }}\n")
                 }
-                "dep_keep" => "[dependencies]\ndep_c = { path = \"../dep_c\" }\n".to_owned(),
+                "dep_keep" => {
+                    let dep_c = if self.dep_keep_uses_dep_c_3 {
+                        "../dep_c3"
+                    } else {
+                        "../dep_c"
+                    };
+                    format!("[dependencies]\ndep_c = {{ path = \"{dep_c}\" }}\n")
+                }
                 "dep_marker" => {
                     "[dependencies]\ndep_derive = { path = \"../dep_derive\" }\n".to_owned()
                 }
@@ -244,6 +253,11 @@ impl Fixture {
             "[package]\nname = \"dep_c\"\nversion = \"2.0.0\"\nedition = \"2024\"\n",
         );
         self.write("deps/dep_c2/src/lib.rs", "pub struct Thing;");
+        self.write(
+            "deps/dep_c3/Cargo.toml",
+            "[package]\nname = \"dep_c\"\nversion = \"3.0.0\"\nedition = \"2024\"\n",
+        );
+        self.write("deps/dep_c3/src/lib.rs", "pub struct Thing;");
 
         let mut source = SUBJECT.to_owned();
         if self.options.same_named_impls {

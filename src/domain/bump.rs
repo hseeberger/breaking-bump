@@ -18,6 +18,7 @@ pub(crate) fn incompatible_bumps(old: &Workspace, new: &Workspace) -> Result<Vec
     let old_members = old
         .members
         .iter()
+        .filter(|package| package.is_published_library())
         .map(|package| (package.name.as_str(), package))
         .collect::<BTreeMap<_, _>>();
     let member_names = old
@@ -28,7 +29,11 @@ pub(crate) fn incompatible_bumps(old: &Workspace, new: &Workspace) -> Result<Vec
         .collect::<BTreeSet<_>>();
 
     let mut bumps = Vec::new();
-    for package in new.members.iter().filter(|package| package.published) {
+    for package in new
+        .members
+        .iter()
+        .filter(|package| package.is_published_library())
+    {
         let Some(old_package) = old_members.get(package.name.as_str()) else {
             continue;
         };
@@ -97,6 +102,33 @@ mod tests {
         let mut new = workspace("^0.27.1", "^2.0");
         new.members[1].dependencies.push(dependency("ext", "^3.0"));
         assert!(incompatible_bumps(&workspace("^0.27.1", "^1.0"), &new).is_err());
+    }
+
+    #[test]
+    fn ignores_crates_without_a_library() {
+        let binary = |requirement: &str| Workspace {
+            members: vec![Package {
+                library: None,
+                ..package("tool", vec![dependency("serde", requirement)])
+            }],
+            metadata: serde_json::Value::Null,
+        };
+        let bumps = incompatible_bumps(&binary("~1.0"), &binary("~2.0")).unwrap();
+        assert!(bumps.is_empty());
+    }
+
+    #[test]
+    fn ignores_crates_that_become_a_library() {
+        let tool = |library: Option<String>, requirement: &str| Workspace {
+            members: vec![Package {
+                library,
+                ..package("tool", vec![dependency("serde", requirement)])
+            }],
+            metadata: serde_json::Value::Null,
+        };
+        let bumps = incompatible_bumps(&tool(None, "~1.0"), &tool(Some("tool".to_owned()), "~2.0"))
+            .unwrap();
+        assert!(bumps.is_empty());
     }
 
     fn workspace(core: &str, external: &str) -> Workspace {

@@ -231,34 +231,49 @@ where
                 )
             })?
             .to_path_buf();
-        for (package, group) in grouped(changes) {
-            let culprits = culprits(old, new, old_library, new_library, &bumps, &group);
+        let mut evidences = BTreeMap::<(&str, &str), Evidence>::new();
+        for change in &changes {
+            let culprits = culprits(old, new, old_library, new_library, &bumps, change);
             if culprits.is_empty() {
                 return Err(Undecided(format!(
-                    "{name}: cannot attribute the change of {package} in the public API to a \
-                     bumped dependency"
+                    "{name}: cannot attribute the change of {} at {} to a bumped dependency",
+                    change.package, change.reference
                 ))
                 .into());
             }
             for bump in culprits {
-                findings.push(Finding {
-                    bump: bump.clone(),
-                    package: package.clone(),
-                    old_versions: versions(&group.old),
-                    new_versions: versions(&group.new),
-                    items: group.items.clone(),
-                    location: new_library.location(&bump.dependency),
-                    manifest: manifest.clone(),
-                });
+                let evidence = evidences
+                    .entry((bump.dependency.as_str(), change.package.as_str()))
+                    .or_insert_with(|| Evidence {
+                        bump,
+                        old_versions: BTreeSet::new(),
+                        new_versions: BTreeSet::new(),
+                        items: Vec::new(),
+                    });
+                evidence.old_versions.extend(versions(&change.old));
+                evidence.new_versions.extend(versions(&change.new));
+                evidence.items.push(change.reference.to_string());
             }
+        }
+        for ((_, package), evidence) in evidences {
+            findings.push(Finding {
+                bump: evidence.bump.clone(),
+                package: package.to_owned(),
+                old_versions: evidence.old_versions,
+                new_versions: evidence.new_versions,
+                items: evidence.items,
+                location: new_library.location(&evidence.bump.dependency),
+                manifest: manifest.clone(),
+            });
         }
     }
     Ok(findings)
 }
 
-struct Group {
-    old: BTreeSet<DefiningPackage>,
-    new: BTreeSet<DefiningPackage>,
+struct Evidence<'a> {
+    bump: &'a Bump,
+    old_versions: BTreeSet<semver::Version>,
+    new_versions: BTreeSet<semver::Version>,
     items: Vec<String>,
 }
 
@@ -272,28 +287,13 @@ where
         .find(|library| library.name == name)
 }
 
-fn grouped(changes: Vec<Change>) -> BTreeMap<String, Group> {
-    let mut groups = BTreeMap::<String, Group>::new();
-    for change in changes {
-        let group = groups.entry(change.package).or_insert_with(|| Group {
-            old: BTreeSet::new(),
-            new: BTreeSet::new(),
-            items: Vec::new(),
-        });
-        group.old.extend(change.old);
-        group.new.extend(change.new);
-        group.items.push(change.reference.to_string());
-    }
-    groups
-}
-
 fn culprits<'a, S>(
     old: &S,
     new: &S,
     old_library: &Package,
     new_library: &Package,
     bumps: &[&'a Bump],
-    group: &Group,
+    change: &Change,
 ) -> Vec<&'a Bump>
 where
     S: Snapshot,
@@ -301,12 +301,12 @@ where
     let reaches_new = bumps
         .iter()
         .copied()
-        .filter(|bump| reaches(new, new_library, &bump.dependency, &group.new))
+        .filter(|bump| reaches(new, new_library, &bump.dependency, &change.new))
         .collect::<Vec<_>>();
     let reaches_both = reaches_new
         .iter()
         .copied()
-        .filter(|bump| reaches(old, old_library, &bump.dependency, &group.old))
+        .filter(|bump| reaches(old, old_library, &bump.dependency, &change.old))
         .collect::<Vec<_>>();
     if reaches_both.is_empty() {
         reaches_new

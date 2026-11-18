@@ -1,6 +1,6 @@
 use crate::domain::{
     bot::Bot,
-    pull_request::{Commit, Preconditions, PullRequest, Refusal, preconditions},
+    pull_request::{Commit, PullRequest, PullRequestState, Refusal, marking, pull_request_state},
 };
 
 pub(crate) trait Forge {
@@ -30,30 +30,31 @@ where
     B: Bot,
 {
     let pull_request = forge.pull_request(number)?;
-    let commit = forge.commit(examined)?;
-    match preconditions(bot, &pull_request, &commit, examined) {
-        Preconditions::Refused(refusal) => Ok(Marking::Refused(refusal)),
-        Preconditions::Moved => Ok(Marking::Moved {
-            title_marked: false,
-        }),
-        Preconditions::Met {
-            message,
-            parent,
-            title,
-        } => {
-            let new = forge.create_commit(&message, &commit.tree, &parent)?;
-            if let Some(title) = title {
-                forge.set_title(number, &title)?;
-            }
-            if forge.move_branch(&pull_request.branch, examined, &new)? {
-                Ok(Marking::Marked {
-                    branch: pull_request.branch,
-                    commit: new,
-                })
-            } else {
-                Ok(Marking::Moved { title_marked: true })
-            }
+    match pull_request_state(bot, &pull_request, examined) {
+        PullRequestState::Ready => {}
+        PullRequestState::Moved => {
+            return Ok(Marking::Moved {
+                title_marked: false,
+            });
         }
+        PullRequestState::Refused(refusal) => return Ok(Marking::Refused(refusal)),
+    }
+    let commit = forge.commit(examined)?;
+    let marking = match marking(bot, &pull_request, &commit) {
+        Ok(marking) => marking,
+        Err(refusal) => return Ok(Marking::Refused(refusal)),
+    };
+    let new = forge.create_commit(&marking.message, &commit.tree, &marking.parent)?;
+    if let Some(title) = marking.title {
+        forge.set_title(number, &title)?;
+    }
+    if forge.move_branch(&pull_request.branch, examined, &new)? {
+        Ok(Marking::Marked {
+            branch: pull_request.branch,
+            commit: new,
+        })
+    } else {
+        Ok(Marking::Moved { title_marked: true })
     }
 }
 
@@ -140,6 +141,19 @@ mod tests {
     }
 
     #[test]
+    fn a_moved_head_does_not_need_the_examined_commit() {
+        let mut forge = FakeForge::new("build(deps): bump dep");
+        forge.commit_missing = true;
+        let marking = mark(&forge, &Dependabot, 7, "force-pushed-away").unwrap();
+        assert_eq!(
+            marking,
+            Marking::Moved {
+                title_marked: false
+            }
+        );
+    }
+
+    #[test]
     fn a_refusal_changes_nothing() {
         let mut forge = FakeForge::new("build(deps): bump dep");
         forge.author = "someone";
@@ -156,6 +170,7 @@ mod tests {
         title: &'static str,
         branch_moved: bool,
         title_fails: bool,
+        commit_missing: bool,
         calls: RefCell<Vec<String>>,
     }
 
@@ -166,6 +181,7 @@ mod tests {
                 title,
                 branch_moved: false,
                 title_fails: false,
+                commit_missing: false,
                 calls: RefCell::new(vec![]),
             }
         }
@@ -183,7 +199,10 @@ mod tests {
             })
         }
 
-        fn commit(&self, _sha: &str) -> anyhow::Result<Commit> {
+        fn commit(&self, sha: &str) -> anyhow::Result<Commit> {
+            if self.commit_missing {
+                bail!("GET /commits/{sha} failed with 422 Unprocessable Entity");
+            }
             Ok(Commit {
                 message: "build(deps): bump dep\n\nbody".to_owned(),
                 tree: "tree".to_owned(),

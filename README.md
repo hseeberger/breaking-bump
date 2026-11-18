@@ -149,6 +149,8 @@ title keeps a `!` for a commit that `mark` never marked. Check the title before 
 - With squash merges, `check` cannot see the final commit message, so `require-marker` only
   covers merge commits and rebase merges.
 - Only Dependabot pull requests on GitHub can be marked.
+- Dependabot no longer rebases a pull request that `mark` changed. Comment `@dependabot recreate`
+  instead: Dependabot rebuilds the commit unmarked, and the workflow marks it again.
 
 ## License
 
