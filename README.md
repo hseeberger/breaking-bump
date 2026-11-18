@@ -308,12 +308,6 @@ The workflow checks the pull requests of
 - Dependabot no longer rebases a pull request that `mark` changed. Comment `@dependabot recreate`
   instead: Dependabot rebuilds the commit unmarked, and the workflow marks it again.
 
-## Documentation
-
-- [docs/spec.md](docs/spec.md): the specification, with every input, rule, result and exit code.
-- [docs/design.md](docs/design.md): how breaking-bump works and why, from the two snapshots of a
-  check down to the order in which `mark` changes a pull request.
-
 ## Development
 
 The [justfile](justfile) defines the usual tasks; `just all` runs check, fmt, lint, test and doc.
