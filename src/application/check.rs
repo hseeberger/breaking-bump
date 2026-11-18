@@ -353,3 +353,170 @@ where
     }
     Ok(judged_findings)
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        application::{Snapshot, check::findings},
+        domain::{
+            Undecided,
+            bump::Bump,
+            package::{Dependency, Location, Package},
+            reference::{ApiItems, DefiningPackage, Reference},
+        },
+    };
+    use semver::{Version, VersionReq};
+    use std::{
+        collections::{BTreeMap, BTreeSet, VecDeque},
+        path::Path,
+    };
+
+    #[test]
+    fn a_change_is_attributed_to_the_bump_that_reaches_it() {
+        let old = snapshot("1.0.0", &[("a 1.0.0", "c 1.0.0")]);
+        let new = snapshot("2.0.0", &[("a 2.0.0", "c 2.0.0")]);
+        let findings =
+            findings(&old, &new, &[bump("a"), bump("b")], Path::new("/workspace")).unwrap();
+        assert_eq!(findings.len(), 1);
+        let finding = &findings[0];
+        assert_eq!(finding.bump.dependency, "a");
+        assert_eq!(finding.package, "c");
+        assert_eq!(
+            finding.old_versions,
+            BTreeSet::from([Version::new(1, 0, 0)])
+        );
+        assert_eq!(
+            finding.new_versions,
+            BTreeSet::from([Version::new(2, 0, 0)])
+        );
+        assert_eq!(finding.items, ["`c::T` in `subject::f`"]);
+        assert_eq!(finding.location, Location::Own);
+        assert_eq!(finding.manifest, Path::new("subject/Cargo.toml"));
+    }
+
+    #[test]
+    fn a_change_that_no_bump_reaches_is_undecided() {
+        let old = snapshot("1.0.0", &[]);
+        let new = snapshot("2.0.0", &[]);
+        let error =
+            findings(&old, &new, &[bump("a"), bump("b")], Path::new("/workspace")).unwrap_err();
+        let undecided = error.downcast::<Undecided>().unwrap();
+        assert!(
+            undecided.0.contains("cannot attribute the change of c"),
+            "{undecided}"
+        );
+    }
+
+    struct FakeSnapshot {
+        libraries: Vec<Package>,
+        api_items: ApiItems,
+        dependencies: BTreeMap<String, Vec<String>>,
+    }
+
+    impl Snapshot for FakeSnapshot {
+        fn libraries(&self) -> &[Package] {
+            &self.libraries
+        }
+
+        fn api_items(&self, _library: &Package) -> anyhow::Result<ApiItems> {
+            Ok(self.api_items.clone())
+        }
+
+        fn package_grouped_foreign_paths(
+            &self,
+            _library: &Package,
+        ) -> anyhow::Result<BTreeMap<String, BTreeSet<String>>> {
+            unreachable!()
+        }
+
+        fn direct_dependencies(&self, package_id: &str) -> Vec<String> {
+            self.dependencies
+                .get(package_id)
+                .cloned()
+                .unwrap_or_default()
+        }
+
+        fn distances(&self, package_id: &str) -> BTreeMap<String, usize> {
+            let mut distances = BTreeMap::from([(package_id.to_owned(), 0)]);
+            let mut queue = VecDeque::from([package_id.to_owned()]);
+            while let Some(current) = queue.pop_front() {
+                let distance = distances[&current];
+                for dependency in self.direct_dependencies(&current) {
+                    if !distances.contains_key(&dependency) {
+                        distances.insert(dependency.clone(), distance + 1);
+                        queue.push_back(dependency);
+                    }
+                }
+            }
+            distances
+        }
+
+        fn package_name(&self, package_id: &str) -> &str {
+            self.dependencies
+                .keys()
+                .find(|id| *id == package_id)
+                .and_then(|id| id.split(' ').next())
+                .unwrap_or("?")
+        }
+
+        fn package_version(&self, _package_id: &str) -> String {
+            unreachable!()
+        }
+    }
+
+    fn snapshot(version: &str, edges: &[(&str, &str)]) -> FakeSnapshot {
+        let dependencies = [format!("a {version}"), format!("b {version}")];
+        let mut graph = BTreeMap::from([
+            ("subject 0.1.0".to_owned(), dependencies.to_vec()),
+            (dependencies[0].clone(), vec![]),
+            (dependencies[1].clone(), vec![]),
+        ]);
+        for (from, to) in edges {
+            graph
+                .entry((*from).to_owned())
+                .or_default()
+                .push((*to).to_owned());
+            graph.entry((*to).to_owned()).or_default();
+        }
+        let reference = Reference {
+            site: "subject::f".to_owned(),
+            position: "/function/sig/output".to_owned(),
+            path: "c::T".to_owned(),
+            kind: "struct".to_owned(),
+        };
+        let package = DefiningPackage {
+            name: "c".to_owned(),
+            version: Version::parse(version).unwrap(),
+            id: format!("c {version}"),
+        };
+        FakeSnapshot {
+            libraries: vec![Package {
+                id: "subject 0.1.0".to_owned(),
+                name: "subject".to_owned(),
+                version: Version::new(0, 1, 0),
+                library: Some("subject".to_owned()),
+                published: true,
+                manifest: "/workspace/subject/Cargo.toml".into(),
+                dependencies: ["a", "b"]
+                    .into_iter()
+                    .map(|name| Dependency {
+                        name: name.to_owned(),
+                        requirement: VersionReq::parse(version).unwrap(),
+                        location: Location::Own,
+                    })
+                    .collect(),
+            }],
+            api_items: ApiItems::from([(reference, BTreeSet::from([package]))]),
+            dependencies: graph,
+        }
+    }
+
+    fn bump(dependency: &str) -> Bump {
+        Bump {
+            dependent: "subject".to_owned(),
+            dependency: dependency.to_owned(),
+            old: VersionReq::parse("^1").unwrap(),
+            new: VersionReq::parse("^2").unwrap(),
+        }
+    }
+}

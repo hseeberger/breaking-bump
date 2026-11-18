@@ -229,6 +229,166 @@ fn cargo_config_of_the_checked_commit() {
 }
 
 #[test]
+fn requirement_that_is_no_plain_caret_is_undecided() {
+    let mut fixture = Fixture::new();
+    fixture.requirements.insert("dep_sig", "~1.0".to_owned());
+    fixture.write_all();
+    let base = fixture.commit("chore: tilde requirement");
+    fixture.requirements.insert("dep_sig", "~2.0".to_owned());
+    let head = fixture.bump("dep_sig", "2.0.0", "build(deps): bump dep_sig");
+    let run = fixture.check(&base, &head);
+    run.assert(2, "undecided", "");
+    assert!(
+        run.stdout
+            .contains("cannot decide: requirement `~1.0` is not a plain caret requirement"),
+        "{run}"
+    );
+}
+
+#[test]
+fn bump_at_each_position_of_the_public_api() {
+    let mut fixture = Fixture::with(Options {
+        positions: true,
+        ..Options::default()
+    });
+    for (name, item) in [
+        ("dep_field", "`dep_field::S` in `subject::Holder::field`"),
+        ("dep_bound", "`dep_bound::Tr` in `subject::bounded`"),
+        ("dep_arg", "`dep_arg::S` in `subject::listed`"),
+        ("dep_from", "`dep_from::S` in `impl "),
+        (
+            "dep_variant",
+            "`dep_variant::S` in `subject::Choice::Variant",
+        ),
+        ("dep_method", "`dep_method::S` in `subject::Api::method`"),
+    ] {
+        let base = fixture.head();
+        let head = fixture.bump(name, "2.0.0", &format!("build(deps): bump {name}"));
+        let run = fixture.check(&base, &head);
+        run.assert(1, "breaking", "missing-marker");
+        assert!(run.stdout.contains(item), "{name}: {run}");
+    }
+}
+
+#[test]
+fn target_specific_dependency() {
+    for (workspace, location, violations) in [
+        (false, "(own)", "missing-marker"),
+        (true, "(inherited)", "inherited,missing-marker"),
+    ] {
+        let mut fixture = Fixture::with(Options {
+            workspace,
+            target_specific: true,
+            ..Options::default()
+        });
+        let base = fixture.head();
+        let head = fixture.bump("dep_sig", "2.0.0", "build(deps): bump dep_sig");
+        let run = fixture.check(&base, &head);
+        run.assert(1, "breaking", violations);
+        assert!(run.stdout.contains(location), "{run}");
+    }
+}
+
+#[test]
+fn renamed_dependency() {
+    for (workspace, location, violations) in [
+        (false, "(own)", "missing-marker"),
+        (true, "(inherited)", "inherited,missing-marker"),
+    ] {
+        let mut fixture = Fixture::with(Options {
+            workspace,
+            renamed: true,
+            ..Options::default()
+        });
+        let base = fixture.head();
+        let head = fixture.bump("dep_sig", "2.0.0", "build(deps): bump dep_sig");
+        let run = fixture.check(&base, &head);
+        run.assert(1, "breaking", violations);
+        assert!(run.stdout.contains("bumping dep_sig from"), "{run}");
+        assert!(run.stdout.contains(location), "{run}");
+    }
+}
+
+#[test]
+fn unpublished_crate_is_not_checked() {
+    let mut fixture = Fixture::with(Options {
+        unpublished: true,
+        ..Options::default()
+    });
+    let base = fixture.head();
+    let head = fixture.bump("dep_sig", "2.0.0", "build(deps): bump dep_sig");
+    let run = fixture.check(&base, &head);
+    run.assert(0, "compatible", "");
+    assert!(
+        run.stdout.contains("no incompatible dependency bump"),
+        "{run}"
+    );
+}
+
+#[test]
+fn marker_counts_only_for_the_crate_whose_manifest_it_changes() {
+    let mut fixture = Fixture::with(Options {
+        workspace: true,
+        second_member: true,
+        ..Options::default()
+    });
+    let base = fixture.head();
+    fixture.bump("dep_reexport", "2.0.0", "build(deps)!: bump dep_reexport");
+    let head = fixture.bump("dep_other", "2.0.0", "build(deps): bump dep_other");
+    let run = fixture.check(&base, &head);
+    run.assert(1, "breaking", "missing-marker");
+    let lines = run.stdout.lines().collect::<Vec<_>>();
+    let finding = |start: &str| {
+        lines
+            .iter()
+            .position(|line| line.starts_with(start))
+            .unwrap_or_else(|| panic!("no finding `{start}`: {run}"))
+    };
+    let subject = finding("subject: bumping dep_reexport from");
+    assert!(!lines[subject + 1].contains("missing-marker"), "{run}");
+    let other = finding("other: bumping dep_other from");
+    assert!(lines[other + 1].starts_with("  missing-marker: "), "{run}");
+    assert!(lines[other + 1].contains("other/Cargo.toml"), "{run}");
+}
+
+#[test]
+fn dependency_on_another_member_is_ignored() {
+    let mut fixture = Fixture::with(Options {
+        workspace: true,
+        second_member: true,
+        ..Options::default()
+    });
+    let base = fixture.head();
+    fixture.subject_version = "0.2.0".to_owned();
+    fixture.write_all();
+    let head = fixture.commit("feat!: change subject");
+    let run = fixture.check(&base, &head);
+    run.assert(0, "compatible", "");
+    assert!(
+        run.stdout.contains("no incompatible dependency bump"),
+        "{run}"
+    );
+}
+
+#[test]
+fn workspace_in_a_subdirectory_of_the_repository() {
+    for (message, code, violations) in [
+        ("build(deps): bump dep_sig", 1, "missing-marker"),
+        ("build(deps)!: bump dep_sig", 0, ""),
+    ] {
+        let mut fixture = Fixture::with(Options {
+            nested: true,
+            ..Options::default()
+        });
+        let base = fixture.head();
+        let head = fixture.bump("dep_sig", "2.0.0", message);
+        fixture
+            .check(&base, &head)
+            .assert(code, "breaking", violations);
+    }
+}
+
+#[test]
 fn inherited_dependency() {
     let mut fixture = Fixture::with(Options {
         workspace: true,

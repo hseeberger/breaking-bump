@@ -1,6 +1,6 @@
 mod common;
 
-use crate::common::Fixture;
+use crate::common::{Fixture, Options};
 
 #[test]
 fn exposed_dependencies() {
@@ -42,9 +42,9 @@ fn exposed_dependencies() {
 
 #[test]
 fn location_of_inherited_dependencies() {
-    let fixture = Fixture::with(common::Options {
+    let fixture = Fixture::with(Options {
         workspace: true,
-        ..Default::default()
+        ..Options::default()
     });
     let run = fixture.run(&["exposed", "-p", "subject"]);
     assert_eq!(run.code, 0, "{run}");
@@ -66,4 +66,37 @@ fn includes_uncommitted_changes() {
     let run = fixture.run(&["exposed"]);
     assert_eq!(run.code, 0, "{run}");
     assert!(run.stdout.contains("  dep_sig ^2.0.0 (own)"), "{run}");
+}
+
+#[test]
+fn unpublished_crate_is_not_listed() {
+    let fixture = Fixture::with(Options {
+        unpublished: true,
+        ..Options::default()
+    });
+    let run = fixture.run(&["exposed"]);
+    assert_eq!(run.code, 0, "{run}");
+    assert_eq!(run.stdout, "", "{run}");
+}
+
+#[test]
+fn restricted_to_one_member() {
+    let fixture = Fixture::with(Options {
+        workspace: true,
+        second_member: true,
+        ..Options::default()
+    });
+    let run = fixture.run(&["exposed", "-p", "other"]);
+    assert_eq!(run.code, 0, "{run}");
+    let lines = run.stdout.lines().collect::<Vec<_>>();
+    assert_eq!(lines[0], "other", "{run}");
+    assert!(
+        lines[1..].iter().all(|line| line.starts_with("  ")),
+        "{run}"
+    );
+    assert!(
+        run.stdout
+            .contains("  dep_other ^1.0.0 (own): `dep_other::O`"),
+        "{run}"
+    );
 }

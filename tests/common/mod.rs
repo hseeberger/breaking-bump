@@ -27,6 +27,15 @@ const DEPS: [(&str, &str); 9] = [
     ("dep_keep", "pub use dep_c::Thing;"),
 ];
 
+const POSITION_DEPS: [(&str, &str); 6] = [
+    ("dep_field", "pub struct S;"),
+    ("dep_bound", "pub trait Tr {}"),
+    ("dep_arg", "pub struct S;"),
+    ("dep_from", "pub struct S;"),
+    ("dep_variant", "pub struct S;"),
+    ("dep_method", "pub struct S;"),
+];
+
 const DERIVE: &str = r#"
 use proc_macro::{TokenStream, TokenTree};
 
@@ -111,6 +120,44 @@ pub mod third {
 }
 "#;
 
+const POSITIONS: &str = r#"
+pub struct Holder {
+    pub field: dep_field::S,
+}
+
+pub fn bounded<T: dep_bound::Tr>(_value: T) {}
+
+pub fn listed() -> Vec<dep_arg::S> {
+    Vec::new()
+}
+
+impl From<dep_from::S> for Local {
+    fn from(_value: dep_from::S) -> Self {
+        Local
+    }
+}
+
+pub enum Choice {
+    Variant(dep_variant::S),
+}
+
+pub trait Api {
+    fn method(&self) -> dep_method::S;
+}
+"#;
+
+const OTHER: &str = r#"
+pub struct Other;
+
+pub fn other() -> dep_other::O {
+    dep_other::O
+}
+
+pub fn local() -> subject::Local {
+    subject::Local
+}
+"#;
+
 #[derive(Default)]
 pub struct Options {
     pub workspace: bool,
@@ -119,6 +166,13 @@ pub struct Options {
     pub keep_dep_c_1: bool,
     pub same_named_impls: bool,
     pub cargo_env: bool,
+    pub positions: bool,
+    pub target_specific: bool,
+    pub renamed: bool,
+    pub unpublished: bool,
+    // Needs `workspace`.
+    pub second_member: bool,
+    pub nested: bool,
 }
 
 // A git repository with a published crate `subject` and path dependencies under `deps/`.
@@ -126,7 +180,9 @@ pub struct Fixture {
     pub dir: TempDir,
     target: TempDir,
     pub versions: BTreeMap<&'static str, String>,
+    pub requirements: BTreeMap<&'static str, String>,
     pub description: String,
+    pub subject_version: String,
     pub dep_b_uses_dep_c_2: bool,
     pub dep_keep_uses_dep_c_3: bool,
     pub settings: Option<String>,
@@ -148,9 +204,11 @@ impl Fixture {
     pub fn with(options: Options) -> Self {
         let mut versions = DEPS
             .iter()
+            .chain(&POSITION_DEPS)
             .map(|(name, _)| (*name, "1.0.0".to_owned()))
             .collect::<BTreeMap<_, _>>();
         versions.insert("dep_derive", "1.0.0".to_owned());
+        versions.insert("dep_other", "1.0.0".to_owned());
         let fixture = Self {
             dir: tempfile::Builder::new()
                 .prefix("breaking-bump-fixture-")
@@ -161,7 +219,9 @@ impl Fixture {
                 .tempdir()
                 .unwrap(),
             versions,
+            requirements: BTreeMap::new(),
             description: "subject".to_owned(),
+            subject_version: "0.1.0".to_owned(),
             dep_b_uses_dep_c_2: false,
             dep_keep_uses_dep_c_3: false,
             settings: None,
@@ -199,8 +259,16 @@ impl Fixture {
         self.git(&["rev-parse", "HEAD"])
     }
 
+    pub fn workspace_dir(&self) -> PathBuf {
+        if self.options.nested {
+            self.path().join("nested")
+        } else {
+            self.path().to_path_buf()
+        }
+    }
+
     pub fn write(&self, path: &str, content: &str) {
-        let path = self.path().join(path);
+        let path = self.workspace_dir().join(path);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, content.trim_start()).unwrap();
     }
@@ -208,7 +276,14 @@ impl Fixture {
     pub fn write_all(&self) {
         let workspace = self.options.workspace;
         let up = if workspace { "../" } else { "" };
-        for (name, source) in DEPS {
+        let mut deps = DEPS.to_vec();
+        if self.options.positions {
+            deps.extend(POSITION_DEPS);
+        }
+        if self.options.second_member {
+            deps.push(("dep_other", "pub struct O;"));
+        }
+        for (name, source) in deps {
             let dependencies = match name {
                 "dep_b" => {
                     let dep_c = if self.dep_b_uses_dep_c_2 {
@@ -265,6 +340,12 @@ impl Fixture {
         } else {
             source.push_str(TRANSITIVE);
         }
+        if self.options.positions {
+            source.push_str(POSITIONS);
+        }
+        if self.options.renamed {
+            source = source.replace("dep_sig::", "sig::");
+        }
         let mut extra = String::new();
         if let Some(version) = self.options.private_dep_c {
             let visibility = if self.options.public_dep_c {
@@ -299,32 +380,56 @@ impl Fixture {
             );
         }
 
+        let dep_sig_key = if self.options.renamed {
+            "sig"
+        } else {
+            "dep_sig"
+        };
+        let dep_sig_package = if self.options.renamed {
+            "package = \"dep_sig\", "
+        } else {
+            ""
+        };
+        let dep_sig = if workspace {
+            format!("{dep_sig_key} = {{ workspace = true }}")
+        } else {
+            format!(
+                "{dep_sig_key} = {{ {dep_sig_package}path = \"deps/dep_sig\", version = \"{}\" }}",
+                self.requirement("dep_sig")
+            )
+        };
         let mut dependencies = Vec::new();
-        for name in [
-            "dep_reexport",
-            "dep_sig",
-            "dep_trait",
-            "dep_private",
-            "dep_marker",
-        ] {
-            if workspace && name == "dep_sig" {
-                dependencies.push(format!("{name} = {{ workspace = true }}"));
-            } else {
-                dependencies.push(format!(
-                    "{name} = {{ path = \"{up}deps/{name}\", version = \"{}\" }}",
-                    self.versions[name]
-                ));
-            }
+        let mut target = String::new();
+        if self.options.target_specific {
+            target = format!("\n[target.'cfg(any(unix, windows))'.dependencies]\n{dep_sig}\n");
+        } else {
+            dependencies.push(dep_sig);
+        }
+        let mut names = vec!["dep_reexport", "dep_trait", "dep_private", "dep_marker"];
+        if self.options.positions {
+            names.extend(POSITION_DEPS.iter().map(|(name, _)| *name));
+        }
+        for name in names {
+            dependencies.push(format!(
+                "{name} = {{ path = \"{up}deps/{name}\", version = \"{}\" }}",
+                self.requirement(name)
+            ));
         }
         dependencies.push(format!(
             "dep_b = {{ path = \"{up}deps/dep_b\", version = \"{}\", optional = true }}",
             self.versions["dep_b"]
         ));
+        let publish = if self.options.unpublished {
+            "publish = false\n"
+        } else {
+            ""
+        };
         let package = format!(
-            "[package]\nname = \"subject\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\
-             description = \"{}\"\n\n[dependencies]\n{}\n{extra}\n\
+            "[package]\nname = \"subject\"\nversion = \"{}\"\nedition = \"2024\"\n\
+             description = \"{}\"\n{publish}\n[dependencies]\n{}\n{extra}{target}\n\
              [dev-dependencies]\ndep_dev = {{ path = \"{up}deps/dep_dev\", version = \"{}\" }}\n\n\
              [features]\ntransitive = [\"dep:dep_b\"]\n",
+            self.subject_version,
             self.description,
             dependencies.join("\n"),
             self.versions["dep_dev"],
@@ -334,17 +439,36 @@ impl Fixture {
             None => String::new(),
         };
         if workspace {
+            let members = if self.options.second_member {
+                "\"subject\", \"other\""
+            } else {
+                "\"subject\""
+            };
             self.write(
                 "Cargo.toml",
                 &format!(
-                    "[workspace]\nmembers = [\"subject\"]\nexclude = [\"deps\"]\nresolver = \"3\"\n\n\
+                    "[workspace]\nmembers = [{members}]\nexclude = [\"deps\"]\nresolver = \"3\"\n\n\
                      [workspace.dependencies]\n\
-                     dep_sig = {{ path = \"deps/dep_sig\", version = \"{}\" }}\n{settings}",
-                    self.versions["dep_sig"]
+                     {dep_sig_key} = {{ {dep_sig_package}path = \"deps/dep_sig\", version = \"{}\" }}\n\
+                     {settings}",
+                    self.requirement("dep_sig")
                 ),
             );
             self.write("subject/Cargo.toml", &package);
             self.write("subject/src/lib.rs", &source);
+            if self.options.second_member {
+                self.write(
+                    "other/Cargo.toml",
+                    &format!(
+                        "[package]\nname = \"other\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+                         [dependencies]\n\
+                         dep_other = {{ path = \"../deps/dep_other\", version = \"{}\" }}\n\
+                         subject = {{ path = \"../subject\", version = \"{}\" }}\n",
+                        self.versions["dep_other"], self.subject_version
+                    ),
+                );
+                self.write("other/src/lib.rs", OTHER);
+            }
         } else {
             self.write(
                 "Cargo.toml",
@@ -357,7 +481,7 @@ impl Fixture {
     pub fn commit(&self, message: &str) -> String {
         let status = Command::new("cargo")
             .args(["generate-lockfile", "--offline", "--quiet"])
-            .current_dir(self.path())
+            .current_dir(self.workspace_dir())
             .env_remove("CARGO_TARGET_DIR")
             .status()
             .unwrap();
@@ -391,7 +515,7 @@ impl Fixture {
             None => command.env_remove("RUSTUP_TOOLCHAIN"),
         };
         let output = command
-            .current_dir(self.path())
+            .current_dir(self.workspace_dir())
             .env_remove("CARGO")
             .env("CARGO_TARGET_DIR", self.target.path())
             .env("GITHUB_OUTPUT", &outputs)
@@ -413,6 +537,10 @@ impl Fixture {
 
     pub fn target(&self) -> &Path {
         self.target.path()
+    }
+
+    fn requirement(&self, name: &str) -> &str {
+        self.requirements.get(name).unwrap_or(&self.versions[name])
     }
 }
 
