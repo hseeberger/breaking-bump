@@ -152,7 +152,7 @@ fn print_report(report: &Report) {
             }
         }
         Outcome::Undecided(reason) => println!("cannot decide: {reason}"),
-        Outcome::Error(error) => println!("error: {error:#}"),
+        Outcome::Error(error) => eprintln!("error: {error:#}"),
     }
     println!("result: {}", report.outcome.name());
 }
@@ -233,7 +233,7 @@ fn run_mark(args: MarkArgs) -> ExitCode {
         .or_else(|_| env::var("GITHUB_TOKEN"))
         .ok()
     else {
-        println!("error: neither GH_TOKEN nor GITHUB_TOKEN is set");
+        eprintln!("error: neither GH_TOKEN nor GITHUB_TOKEN is set");
         return ExitCode::from(3);
     };
     let api = env::var("GITHUB_API_URL").unwrap_or_else(|_| "https://api.github.com".to_owned());
@@ -259,7 +259,7 @@ fn run_mark(args: MarkArgs) -> ExitCode {
             ExitCode::from(1)
         }
         Err(error) => {
-            println!("error: {error:#}");
+            eprintln!("error: {error:#}");
             ExitCode::from(3)
         }
     }
@@ -276,7 +276,7 @@ fn run_exposed(args: ExposedArgs) -> ExitCode {
             }
         }
         Err(error) => {
-            println!("error: {error:#}");
+            eprintln!("error: {error:#}");
             ExitCode::from(3)
         }
     }

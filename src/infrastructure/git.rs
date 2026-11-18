@@ -4,12 +4,12 @@ use crate::{
 };
 use anyhow::{Context, bail};
 use std::{
-    fs,
+    error::Error,
+    fmt, fs,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, ExitStatus},
 };
 use tempfile::TempDir;
-use thiserror::Error;
 
 pub(crate) struct GitRepository {
     directory: PathBuf,
@@ -39,12 +39,16 @@ impl Repository for GitRepository {
     }
 
     fn default_base(&self) -> anyhow::Result<Option<String>> {
-        Ok(git(
+        let base = git(
             &self.directory,
             &["rev-parse", "--verify", "--quiet", "origin/HEAD^{commit}"],
             &[],
-        )
-        .ok())
+        );
+        match base {
+            Ok(base) => Ok(Some(base)),
+            Err(error) if error.is_silent() => Ok(None),
+            Err(error) => Err(error.into()),
+        }
     }
 
     fn merge_base(&self, base: &str, head: &str) -> anyhow::Result<String> {
@@ -143,12 +147,33 @@ impl Drop for GitWorktree {
     }
 }
 
-#[derive(Debug, Error)]
-#[error("git {command} failed: {stderr}")]
+#[derive(Debug)]
 pub(crate) struct GitError {
     command: String,
+    status: Option<ExitStatus>,
     stderr: String,
 }
+
+impl GitError {
+    fn is_silent(&self) -> bool {
+        self.status.and_then(|status| status.code()) == Some(1) && self.stderr.is_empty()
+    }
+}
+
+impl fmt::Display for GitError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "git {} failed", self.command)?;
+        if let Some(status) = self.status {
+            write!(f, " ({status})")?;
+        }
+        if !self.stderr.is_empty() {
+            write!(f, ": {}", self.stderr)?;
+        }
+        Ok(())
+    }
+}
+
+impl Error for GitError {}
 
 pub(crate) fn git(
     directory: &Path,
@@ -168,10 +193,12 @@ pub(crate) fn git(
             .to_owned()),
         Ok(output) => Err(GitError {
             command,
+            status: Some(output.status),
             stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
         }),
         Err(error) => Err(GitError {
             command,
+            status: None,
             stderr: error.to_string(),
         }),
     }
@@ -216,8 +243,14 @@ pub(crate) fn push_with_lease(
 
 #[cfg(test)]
 mod tests {
-    use crate::infrastructure::git::{authorized_env, git, push_with_lease};
-    use std::{fs, path::Path};
+    use crate::{
+        application::check::Repository,
+        infrastructure::git::{GitRepository, authorized_env, git, push_with_lease},
+    };
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+    };
     use tempfile::TempDir;
 
     struct Lease {
@@ -273,6 +306,53 @@ mod tests {
         fn remote_branch(&self) -> String {
             git(self.remote.path(), &["rev-parse", "refs/heads/branch"], &[]).unwrap()
         }
+    }
+
+    #[test]
+    fn default_base_is_none_without_origin_head() {
+        let directory = repository();
+        let repository = GitRepository::open(directory.path()).unwrap();
+        assert_eq!(repository.default_base().unwrap(), None);
+    }
+
+    #[test]
+    fn default_base_is_origin_head() {
+        let directory = repository();
+        let head = git(directory.path(), &["rev-parse", "HEAD"], &[]).unwrap();
+        git(
+            directory.path(),
+            &["update-ref", "refs/remotes/origin/HEAD", &head],
+            &[],
+        )
+        .unwrap();
+        let repository = GitRepository::open(directory.path()).unwrap();
+        assert_eq!(repository.default_base().unwrap(), Some(head));
+    }
+
+    #[test]
+    fn default_base_is_an_error_when_origin_head_is_no_commit() {
+        let directory = repository();
+        let tree = git(directory.path(), &["rev-parse", "HEAD^{tree}"], &[]).unwrap();
+        git(
+            directory.path(),
+            &["update-ref", "refs/remotes/origin/HEAD", &tree],
+            &[],
+        )
+        .unwrap();
+        let repository = GitRepository::open(directory.path()).unwrap();
+        let error = repository.default_base().unwrap_err().to_string();
+        assert!(error.contains("git rev-parse failed"), "{error}");
+    }
+
+    #[test]
+    fn default_base_is_an_error_outside_a_repository() {
+        let directory = TempDir::new().unwrap();
+        let repository = GitRepository {
+            directory: directory.path().to_path_buf(),
+            prefix: PathBuf::new(),
+        };
+        let error = repository.default_base().unwrap_err().to_string();
+        assert!(error.contains("exit status: 128"), "{error}");
     }
 
     #[test]
@@ -344,6 +424,17 @@ mod tests {
         )
         .unwrap_err();
         assert!(!error.to_string().contains("c2VjcmV0LXRva2Vu"));
+    }
+
+    fn repository() -> TempDir {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path();
+        git(path, &["init", "--quiet", "--initial-branch", "main"], &[]).unwrap();
+        git(path, &["config", "user.email", "test@example.com"], &[]).unwrap();
+        git(path, &["config", "user.name", "test"], &[]).unwrap();
+        git(path, &["config", "commit.gpgsign", "false"], &[]).unwrap();
+        commit(path, "feat: initial");
+        directory
     }
 
     fn commit(path: &Path, message: &str) -> String {

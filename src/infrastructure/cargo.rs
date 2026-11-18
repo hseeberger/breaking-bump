@@ -7,7 +7,7 @@ use crate::{
     },
     infrastructure::rustdoc,
 };
-use anyhow::{Context, bail};
+use anyhow::{Context, anyhow, bail};
 use cargo_metadata::{CargoOpt, DependencyKind, Message, Metadata, MetadataCommand, TargetKind};
 use rustdoc_types::Crate;
 use semver::Version;
@@ -16,7 +16,7 @@ use std::{
     env,
     ffi::OsString,
     fs,
-    io::BufReader,
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
@@ -216,20 +216,12 @@ impl CargoSnapshot {
             .spawn()
             .context("cannot run cargo rustdoc")?;
         let stdout = child.stdout.take().context("cargo rustdoc has no stdout")?;
-        let mut artifacts = HashMap::new();
-        for message in Message::parse_stream(BufReader::new(stdout)) {
-            if let Message::CompilerArtifact(artifact) = message? {
-                for file in artifact.filenames {
-                    if let Ok(file) = fs::canonicalize(&file) {
-                        artifacts.insert(file, artifact.package_id.repr.clone());
-                    }
-                }
-            }
-        }
+        let artifacts = artifacts(BufReader::new(stdout));
         let status = child.wait()?;
         if !status.success() {
             bail!("cargo rustdoc failed for {} ({status})", library.name);
         }
+        let artifacts = artifacts?;
         let doc = rustdoc::read(
             &self
                 .target_dir
@@ -243,6 +235,43 @@ impl CargoSnapshot {
 struct Summary {
     name: String,
     version: Version,
+}
+
+// Reads to the end of the stream even after an error, unless reading itself fails.
+fn artifacts<R>(reader: R) -> anyhow::Result<HashMap<PathBuf, String>>
+where
+    R: BufRead,
+{
+    let mut artifacts = HashMap::new();
+    let mut first_error = None;
+    for message in Message::parse_stream(reader) {
+        let message = match message {
+            Ok(message) => message,
+            Err(error) => {
+                first_error
+                    .get_or_insert(anyhow!(error).context("cannot read the cargo rustdoc output"));
+                break;
+            }
+        };
+        if let Message::CompilerArtifact(artifact) = message {
+            for file in artifact.filenames {
+                match fs::canonicalize(&file) {
+                    Ok(path) => {
+                        artifacts.insert(path, artifact.package_id.repr.clone());
+                    }
+                    Err(error) => {
+                        first_error.get_or_insert_with(|| {
+                            anyhow!(error).context(format!("cannot resolve the artifact {file}"))
+                        });
+                    }
+                }
+            }
+        }
+    }
+    match first_error {
+        Some(error) => Err(error),
+        None => Ok(artifacts),
+    }
 }
 
 fn defining_packages(
@@ -264,12 +293,22 @@ fn defining_packages(
         if STD_CRATES.contains(&external.name.as_str()) {
             continue;
         }
-        let path = fs::canonicalize(&external.path).ok();
-        if path.as_ref().is_some_and(|path| path.starts_with(sysroot)) {
+        let path = match fs::canonicalize(&external.path) {
+            Ok(path) => path,
+            Err(error) => {
+                return Err(Undecided(format!(
+                    "{library}: cannot map crate {} ({}) to a package: {error}",
+                    external.name,
+                    external.path.display()
+                ))
+                .into());
+            }
+        };
+        if path.starts_with(sysroot) {
             continue;
         }
-        let Some((id, summary)) = path
-            .and_then(|path| artifacts.get(&path))
+        let Some((id, summary)) = artifacts
+            .get(&path)
             .and_then(|id| packages.get(id).map(|summary| (id, summary)))
         else {
             return Err(Undecided(format!(
@@ -416,12 +455,30 @@ fn cargo() -> OsString {
 mod tests {
     use crate::{
         domain::Undecided,
-        infrastructure::{cargo::defining_packages, rustdoc::tests::doc},
+        infrastructure::{
+            cargo::{artifacts, defining_packages},
+            rustdoc::tests::doc,
+        },
     };
+    use serde_json::json;
     use std::{
         collections::{BTreeSet, HashMap},
+        io::Cursor,
         path::Path,
     };
+
+    #[test]
+    fn a_missing_artifact_is_an_error_after_the_whole_stream_is_read() {
+        let output = format!(
+            "{}\n{}\n",
+            artifact("/nowhere/libfirst.rlib"),
+            artifact("/nowhere/libsecond.rlib")
+        );
+        let mut reader = Cursor::new(output.as_bytes());
+        let error = format!("{:#}", artifacts(&mut reader).unwrap_err());
+        assert!(error.contains("/nowhere/libfirst.rlib"), "{error}");
+        assert_eq!(reader.position(), u64::try_from(output.len()).unwrap());
+    }
 
     #[test]
     fn an_unmapped_crate_is_undecided() {
@@ -449,5 +506,35 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.is::<Undecided>());
+    }
+
+    fn artifact(file: &str) -> String {
+        json!({
+            "reason": "compiler-artifact",
+            "package_id": "path+file:///nowhere/dep#1.0.0",
+            "manifest_path": "/nowhere/dep/Cargo.toml",
+            "target": {
+                "kind": ["lib"],
+                "crate_types": ["lib"],
+                "name": "dep",
+                "src_path": "/nowhere/dep/src/lib.rs",
+                "edition": "2024",
+                "doc": true,
+                "doctest": true,
+                "test": true,
+            },
+            "profile": {
+                "opt_level": "0",
+                "debuginfo": 0,
+                "debug_assertions": true,
+                "overflow_checks": true,
+                "test": false,
+            },
+            "features": [],
+            "filenames": [file],
+            "executable": null,
+            "fresh": false,
+        })
+        .to_string()
     }
 }
