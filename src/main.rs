@@ -4,14 +4,14 @@ mod infrastructure;
 
 use crate::{
     application::{
-        check::{self, Judged, Outcome, Report},
+        check::{self, JudgedFinding, Outcome, Report},
         exposed::{self, Audit, Verdict},
         mark::{self, Marking},
         preflight,
     },
     domain::{bot::Dependabot, finding::Violation},
     infrastructure::{
-        cargo::CargoCli, git::GitRepository, github::GitHub, rustdoc, toolchain::RustupToolchain,
+        cargo::CargoCli, git::GitRepository, github::GitHub, rustdoc, toolchain::ActiveToolchain,
     },
 };
 use anyhow::Context;
@@ -96,7 +96,7 @@ struct ExposedArgs {
 }
 
 fn run_check(args: CheckArgs) -> ExitCode {
-    let report = check(&args);
+    let report = report(&args);
     for warning in &report.warnings {
         eprintln!("warning: {warning}");
     }
@@ -114,8 +114,8 @@ fn run_check(args: CheckArgs) -> ExitCode {
     }
 }
 
-fn check(args: &CheckArgs) -> Report {
-    let prepared = preflight::preflight(&RustupToolchain, rustdoc::FORMAT_VERSION)
+fn report(args: &CheckArgs) -> Report {
+    let prepared = preflight::preflight(&ActiveToolchain, rustdoc::FORMAT_VERSION)
         .and_then(|()| current_dir())
         .and_then(|directory| {
             let repository = GitRepository::open(&directory)?;
@@ -157,7 +157,7 @@ fn print_report(report: &Report) {
     println!("result: {}", report.outcome.name());
 }
 
-fn print_finding(judged: &Judged) {
+fn print_finding(judged: &JudgedFinding) {
     let finding = &judged.finding;
     let bump = &finding.bump;
     let shown = finding
@@ -173,7 +173,7 @@ fn print_finding(judged: &Judged) {
     };
     println!(
         "{}: bumping {} from {} to {} ({}) changes {} from {} to {} in the public API: {shown}{more}",
-        bump.package,
+        bump.dependent,
         bump.dependency,
         bump.old,
         bump.new,
@@ -266,7 +266,7 @@ fn run_mark(args: MarkArgs) -> ExitCode {
 }
 
 fn run_exposed(args: ExposedArgs) -> ExitCode {
-    match exposed(&args) {
+    match audit(&args) {
         Ok(audit) => {
             print_audit(&audit);
             if audit.is_complete() {
@@ -282,8 +282,8 @@ fn run_exposed(args: ExposedArgs) -> ExitCode {
     }
 }
 
-fn exposed(args: &ExposedArgs) -> anyhow::Result<Audit> {
-    preflight::preflight(&RustupToolchain, rustdoc::FORMAT_VERSION)?;
+fn audit(args: &ExposedArgs) -> anyhow::Result<Audit> {
+    preflight::preflight(&ActiveToolchain, rustdoc::FORMAT_VERSION)?;
     let directory = current_dir()?;
     let cargo = CargoCli::new(target_dir(&directory));
     exposed::exposed(&cargo, &directory, &args.packages)
@@ -299,7 +299,7 @@ fn print_audit(audit: &Audit) {
                         [] => String::new(),
                         through => format!(" through {}", through.join(", ")),
                     };
-                    let more = match exposure.more {
+                    let more = match exposure.further_items {
                         0 => String::new(),
                         more => format!(" and {more} more"),
                     };

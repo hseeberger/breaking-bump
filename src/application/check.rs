@@ -6,13 +6,14 @@ use crate::{
         changes::{Change, changes},
         finding::{Finding, Violation},
         marker::is_marked,
-        package::Package,
+        package::{Package, is_manifest},
         reference::DefiningPackage,
         rules::violations,
         settings::Settings,
     },
 };
 use anyhow::{Context, anyhow};
+use semver::Version;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
@@ -71,7 +72,7 @@ impl Report {
 #[derive(Debug)]
 pub(crate) enum Outcome {
     Compatible(String),
-    Breaking(Vec<Judged>),
+    Breaking(Vec<JudgedFinding>),
     Undecided(String),
     Error(anyhow::Error),
 }
@@ -88,7 +89,7 @@ impl Outcome {
 }
 
 #[derive(Debug)]
-pub(crate) struct Judged {
+pub(crate) struct JudgedFinding {
     pub(crate) finding: Finding,
     pub(crate) violations: Vec<Violation>,
 }
@@ -145,11 +146,7 @@ where
     let changed_manifest = repository
         .changed_paths(&merge_base, head)?
         .iter()
-        .any(|path| {
-            Path::new(path)
-                .file_name()
-                .is_some_and(|name| name == "Cargo.toml")
-        });
+        .any(|path| is_manifest(Path::new(path)));
     if !changed_manifest {
         return Ok(Outcome::Compatible("no Cargo.toml changed".to_owned()));
     }
@@ -175,31 +172,8 @@ where
         ));
     }
 
-    let mut marked = BTreeMap::new();
-    let mut judged = Vec::new();
-    for finding in findings {
-        let is_marked = if settings.require_marker {
-            match marked.get(&finding.manifest) {
-                Some(is_marked) => *is_marked,
-                None => {
-                    let is_marked = repository
-                        .messages(&merge_base, head, &finding.manifest)?
-                        .iter()
-                        .any(|message| is_marked(message));
-                    marked.insert(finding.manifest.clone(), is_marked);
-                    is_marked
-                }
-            }
-        } else {
-            false
-        };
-        let violations = violations(&finding, &settings, is_marked);
-        judged.push(Judged {
-            finding,
-            violations,
-        });
-    }
-    Ok(Outcome::Breaking(judged))
+    let findings = judged_findings(repository, &settings, &merge_base, head, findings)?;
+    Ok(Outcome::Breaking(findings))
 }
 
 fn findings<S>(old: &S, new: &S, bumps: &[Bump], workspace: &Path) -> anyhow::Result<Vec<Finding>>
@@ -208,7 +182,7 @@ where
 {
     let names = bumps
         .iter()
-        .map(|bump| bump.package.as_str())
+        .map(|bump| bump.dependent.as_str())
         .collect::<BTreeSet<_>>();
     let mut findings = Vec::new();
     for name in names {
@@ -219,7 +193,7 @@ where
         let changes = changes(&old.api_items(old_library)?, &new.api_items(new_library)?);
         let bumps = bumps
             .iter()
-            .filter(|bump| bump.package == name)
+            .filter(|bump| bump.dependent == name)
             .collect::<Vec<_>>();
         let manifest = new_library
             .manifest
@@ -272,8 +246,8 @@ where
 
 struct Evidence<'a> {
     bump: &'a Bump,
-    old_versions: BTreeSet<semver::Version>,
-    new_versions: BTreeSet<semver::Version>,
+    old_versions: BTreeSet<Version>,
+    new_versions: BTreeSet<Version>,
     items: Vec<String>,
 }
 
@@ -336,9 +310,46 @@ where
         })
 }
 
-fn versions(packages: &BTreeSet<DefiningPackage>) -> BTreeSet<semver::Version> {
+fn versions(packages: &BTreeSet<DefiningPackage>) -> BTreeSet<Version> {
     packages
         .iter()
         .map(|package| package.version.clone())
         .collect()
+}
+
+fn judged_findings<R>(
+    repository: &R,
+    settings: &Settings,
+    merge_base: &str,
+    head: &str,
+    findings: Vec<Finding>,
+) -> anyhow::Result<Vec<JudgedFinding>>
+where
+    R: Repository,
+{
+    let mut manifest_marks = BTreeMap::new();
+    let mut judged_findings = Vec::new();
+    for finding in findings {
+        let marked = if settings.require_marker {
+            match manifest_marks.get(&finding.manifest) {
+                Some(marked) => *marked,
+                None => {
+                    let marked = repository
+                        .messages(merge_base, head, &finding.manifest)?
+                        .iter()
+                        .any(|message| is_marked(message));
+                    manifest_marks.insert(finding.manifest.clone(), marked);
+                    marked
+                }
+            }
+        } else {
+            false
+        };
+        let violations = violations(&finding, settings, marked);
+        judged_findings.push(JudgedFinding {
+            finding,
+            violations,
+        });
+    }
+    Ok(judged_findings)
 }

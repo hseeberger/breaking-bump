@@ -6,7 +6,7 @@ use crate::{
 use anyhow::{Context, bail};
 use base64::{Engine, prelude::BASE64_STANDARD};
 use serde::{Deserialize, de::DeserializeOwned};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::{env, time::Duration};
 use ureq::{Agent, Body, RequestBuilder, http, typestate::WithBody};
 
@@ -49,7 +49,7 @@ impl GitHub {
         json_body(&format!("GET {path}"), response)
     }
 
-    fn post<T>(&self, path: &str, body: serde_json::Value) -> anyhow::Result<T>
+    fn post<T>(&self, path: &str, body: Value) -> anyhow::Result<T>
     where
         T: DeserializeOwned,
     {
@@ -60,7 +60,7 @@ impl GitHub {
         )
     }
 
-    fn patch<T>(&self, path: &str, body: serde_json::Value) -> anyhow::Result<T>
+    fn patch<T>(&self, path: &str, body: Value) -> anyhow::Result<T>
     where
         T: DeserializeOwned,
     {
@@ -75,7 +75,7 @@ impl GitHub {
         &self,
         request: RequestBuilder<WithBody>,
         description: &str,
-        body: serde_json::Value,
+        body: Value,
     ) -> anyhow::Result<T>
     where
         T: DeserializeOwned,
@@ -133,7 +133,7 @@ impl Forge for GitHub {
 
     fn set_title(&self, number: u64, title: &str) -> anyhow::Result<()> {
         let body = json!({ "title": title });
-        self.patch::<serde_json::Value>(&format!("/pulls/{number}"), body)?;
+        self.patch::<Value>(&format!("/pulls/{number}"), body)?;
         Ok(())
     }
 

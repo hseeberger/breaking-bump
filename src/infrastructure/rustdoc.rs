@@ -4,7 +4,7 @@ use rustdoc_types::{
     Crate, GenericArg, GenericArgs, Id, ItemEnum, Path as RustdocPath, StructKind, Type,
     VariantKind,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -24,15 +24,12 @@ pub(crate) struct ForeignReference {
 }
 
 pub(crate) fn read(path: &Path) -> anyhow::Result<Crate> {
-    let json = fs::read_to_string(path)
-        .with_context(|| format!("cannot read rustdoc JSON {}", path.display()))?;
-    let format = serde_json::from_str::<FormatVersion>(&json)
-        .with_context(|| format!("{} is no rustdoc JSON", path.display()))?;
-    if format.format_version != FORMAT_VERSION {
+    let (json, format_version) = json_with_format_version(path)?;
+    if format_version != FORMAT_VERSION {
         bail!(
-            "{} has rustdoc JSON format {}, but breaking-bump supports format {FORMAT_VERSION}",
-            path.display(),
-            format.format_version
+            "{} has rustdoc JSON format {format_version}, but breaking-bump supports format \
+             {FORMAT_VERSION}",
+            path.display()
         );
     }
     serde_json::from_str(&json)
@@ -40,11 +37,39 @@ pub(crate) fn read(path: &Path) -> anyhow::Result<Crate> {
 }
 
 pub(crate) fn format_version(path: &Path) -> anyhow::Result<u32> {
-    let json = fs::read_to_string(path)
-        .with_context(|| format!("cannot read rustdoc JSON {}", path.display()))?;
-    let format = serde_json::from_str::<FormatVersion>(&json)
-        .with_context(|| format!("{} is no rustdoc JSON", path.display()))?;
-    Ok(format.format_version)
+    let (_, format_version) = json_with_format_version(path)?;
+    Ok(format_version)
+}
+
+pub(crate) fn crate_grouped_references(
+    doc: &Crate,
+) -> anyhow::Result<BTreeMap<u32, BTreeSet<Reference>>> {
+    let sites = local_sites(doc);
+    let mut crate_ids = HashMap::<Reference, u32>::new();
+    let mut references = BTreeMap::<u32, BTreeSet<Reference>>::new();
+    for foreign in foreign_references(doc)? {
+        let reference = Reference {
+            site: sites[&foreign.holder].clone(),
+            position: foreign.position,
+            path: foreign.path,
+            kind: foreign.kind,
+        };
+        let crate_id = *crate_ids
+            .entry(reference.clone())
+            .or_insert(foreign.crate_id);
+        if crate_id != foreign.crate_id {
+            return Err(Undecided(format!(
+                "items of the public API named `{}` refer to `{}` from different crates",
+                reference.site, reference.path
+            ))
+            .into());
+        }
+        references
+            .entry(foreign.crate_id)
+            .or_default()
+            .insert(reference);
+    }
+    Ok(references)
 }
 
 pub(crate) fn foreign_references(doc: &Crate) -> anyhow::Result<Vec<ForeignReference>> {
@@ -89,31 +114,12 @@ pub(crate) fn foreign_references(doc: &Crate) -> anyhow::Result<Vec<ForeignRefer
     Ok(references)
 }
 
-pub(crate) fn reference_sites(doc: &Crate) -> anyhow::Result<BTreeMap<u32, BTreeSet<Reference>>> {
-    let sites = local_sites(doc);
-    let mut holders = HashMap::<Reference, u32>::new();
-    let mut references = BTreeMap::<u32, BTreeSet<Reference>>::new();
-    for foreign in foreign_references(doc)? {
-        let reference = Reference {
-            site: sites[&foreign.holder].clone(),
-            position: foreign.position,
-            path: foreign.path,
-            kind: foreign.kind,
-        };
-        let holder = *holders.entry(reference.clone()).or_insert(foreign.crate_id);
-        if holder != foreign.crate_id {
-            return Err(Undecided(format!(
-                "items of the public API named `{}` refer to `{}` from different crates",
-                reference.site, reference.path
-            ))
-            .into());
-        }
-        references
-            .entry(foreign.crate_id)
-            .or_default()
-            .insert(reference);
-    }
-    Ok(references)
+fn json_with_format_version(path: &Path) -> anyhow::Result<(String, u32)> {
+    let json = fs::read_to_string(path)
+        .with_context(|| format!("cannot read rustdoc JSON {}", path.display()))?;
+    let format = serde_json::from_str::<FormatVersion>(&json)
+        .with_context(|| format!("{} is no rustdoc JSON", path.display()))?;
+    Ok((json, format.format_version))
 }
 
 #[derive(Deserialize)]
@@ -258,7 +264,7 @@ fn args_text(args: Option<&GenericArgs>, doc: &Crate) -> String {
 
 fn json_text<T>(value: &T) -> String
 where
-    T: serde::Serialize,
+    T: Serialize,
 {
     serde_json::to_value(value)
         .map(|value| without_ids(&value).to_string())
@@ -324,20 +330,20 @@ fn variant_name(value: &Value) -> String {
 pub(crate) mod tests {
     use crate::{
         domain::Undecided,
-        infrastructure::rustdoc::{FORMAT_VERSION, reference_sites},
+        infrastructure::rustdoc::{FORMAT_VERSION, crate_grouped_references},
     };
     use rustdoc_types::Crate;
     use serde_json::{Value, json};
 
     #[test]
     fn colliding_site_names_are_undecided() {
-        let error = reference_sites(&doc(9, 10)).unwrap_err();
+        let error = crate_grouped_references(&doc(9, 10)).unwrap_err();
         assert!(error.is::<Undecided>());
     }
 
     #[test]
     fn colliding_site_names_with_the_same_crate_are_merged() {
-        let references = reference_sites(&doc(9, 9)).unwrap();
+        let references = crate_grouped_references(&doc(9, 9)).unwrap();
         assert_eq!(references.keys().copied().collect::<Vec<_>>(), [1]);
         let reference = references[&1].first().unwrap();
         assert_eq!(reference.site, "?::get");

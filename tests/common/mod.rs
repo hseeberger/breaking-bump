@@ -2,7 +2,7 @@
 
 use std::{
     collections::BTreeMap,
-    env, fs,
+    env, fmt, fs,
     path::{Path, PathBuf},
     process::Command,
     sync::OnceLock,
@@ -441,8 +441,8 @@ impl Run {
     }
 }
 
-impl std::fmt::Display for Run {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for Run {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "stdout:\n{}\nstderr:\n{}", self.stdout, self.stderr)
     }
 }

@@ -64,7 +64,7 @@ mod tests {
     fn finding(location: Location) -> Finding {
         Finding {
             bump: Bump {
-                package: "subject".to_owned(),
+                dependent: "subject".to_owned(),
                 dependency: "dep".to_owned(),
                 old: VersionReq::parse("^1").unwrap(),
                 new: VersionReq::parse("^2").unwrap(),

@@ -27,7 +27,7 @@ pub(crate) trait Snapshot {
     fn api_items(&self, library: &Package) -> anyhow::Result<ApiItems>;
 
     // Fails with `Undecided` when a crate cannot be mapped to a package.
-    fn foreign_items(
+    fn package_grouped_foreign_paths(
         &self,
         library: &Package,
     ) -> anyhow::Result<BTreeMap<String, BTreeSet<String>>>;

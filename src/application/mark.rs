@@ -1,6 +1,6 @@
 use crate::domain::{
     bot::Bot,
-    pull_request::{Commit, PullRequest, PullRequestState, Refusal, marking, pull_request_state},
+    pull_request::{Commit, PullRequest, PullRequestState, Refusal, pull_request_state, rewrite},
 };
 
 pub(crate) trait Forge {
@@ -40,12 +40,12 @@ where
         PullRequestState::Refused(refusal) => return Ok(Marking::Refused(refusal)),
     }
     let commit = forge.commit(examined)?;
-    let marking = match marking(bot, &pull_request, &commit) {
-        Ok(marking) => marking,
+    let rewrite = match rewrite(bot, &pull_request, &commit) {
+        Ok(rewrite) => rewrite,
         Err(refusal) => return Ok(Marking::Refused(refusal)),
     };
-    let new = forge.create_commit(&marking.message, &commit.tree, &marking.parent)?;
-    if let Some(title) = marking.title {
+    let new = forge.create_commit(&rewrite.message, &commit.tree, &rewrite.parent)?;
+    if let Some(title) = rewrite.title {
         forge.set_title(number, &title)?;
     }
     if forge.move_branch(&pull_request.branch, examined, &new)? {
