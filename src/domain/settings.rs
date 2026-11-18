@@ -1,5 +1,6 @@
 use anyhow::Context;
 use serde::Deserialize;
+use serde_json::Value;
 
 const TABLE: &str = "breaking-bump";
 
@@ -14,11 +15,11 @@ pub(crate) struct Settings {
 }
 
 impl Settings {
-    pub(crate) fn from_workspace_metadata(metadata: &serde_json::Value) -> anyhow::Result<Self> {
+    pub(crate) fn from_workspace_metadata(metadata: &Value) -> anyhow::Result<Self> {
         let table = metadata
             .get(TABLE)
             .cloned()
-            .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
+            .unwrap_or_else(|| Value::Object(Default::default()));
         serde_json::from_value(table)
             .with_context(|| format!("invalid settings in [workspace.metadata.{TABLE}]"))
     }

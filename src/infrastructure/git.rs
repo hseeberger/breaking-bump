@@ -1,4 +1,7 @@
-use crate::application::check::{Repository, Worktree};
+use crate::{
+    application::check::{Repository, Worktree},
+    domain::package::is_manifest,
+};
 use anyhow::{Context, bail};
 use std::{
     fs,
@@ -63,11 +66,7 @@ impl Repository for GitRepository {
             .lines()
             .filter_map(|line| line.get(3..))
             .map(|path| path.rsplit(" -> ").next().unwrap_or(path))
-            .filter(|path| {
-                Path::new(path)
-                    .file_name()
-                    .is_some_and(|name| name == "Cargo.toml")
-            })
+            .filter(|path| is_manifest(Path::new(path)))
             .map(str::to_owned)
             .collect())
     }
@@ -218,7 +217,7 @@ pub(crate) fn push_with_lease(
 #[cfg(test)]
 mod tests {
     use crate::infrastructure::git::{authorized_env, git, push_with_lease};
-    use std::path::Path;
+    use std::{fs, path::Path};
     use tempfile::TempDir;
 
     struct Lease {
@@ -314,11 +313,11 @@ mod tests {
     fn push_fails_when_remote_refuses() {
         let lease = Lease::new();
         let hook = lease.remote.path().join("hooks").join("pre-receive");
-        std::fs::write(&hook, "#!/bin/sh\necho policy >&2\nexit 1\n").unwrap();
+        fs::write(&hook, "#!/bin/sh\necho policy >&2\nexit 1\n").unwrap();
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+            use std::{fs::Permissions, os::unix::fs::PermissionsExt};
+            fs::set_permissions(&hook, Permissions::from_mode(0o755)).unwrap();
         }
         let result = push_with_lease(
             lease.work.path(),

@@ -43,7 +43,7 @@ pub(crate) struct Exposure {
     pub(crate) location: Location,
     pub(crate) through: Vec<String>,
     pub(crate) example: String,
-    pub(crate) more: usize,
+    pub(crate) further_items: usize,
 }
 
 pub(crate) fn exposed<C>(cargo: &C, directory: &Path, packages: &[String]) -> anyhow::Result<Audit>
@@ -82,7 +82,7 @@ fn exposures<S>(snapshot: &S, library: &Package) -> anyhow::Result<Vec<Exposure>
 where
     S: Snapshot,
 {
-    let foreign_items = snapshot.foreign_items(library)?;
+    let package_grouped_foreign_paths = snapshot.package_grouped_foreign_paths(library)?;
     let distances = snapshot
         .direct_dependencies(&library.id)
         .into_iter()
@@ -93,7 +93,7 @@ where
         .collect::<Vec<_>>();
 
     let mut owned = BTreeMap::<&str, BTreeMap<&str, &BTreeSet<String>>>::new();
-    for (package, items) in &foreign_items {
+    for (package, items) in &package_grouped_foreign_paths {
         let reach = distances
             .iter()
             .filter_map(|(dependency, distances)| {
@@ -169,7 +169,7 @@ where
             .first()
             .map(|item| (*item).clone())
             .unwrap_or_default(),
-        more: distinct.saturating_sub(1),
+        further_items: distinct.saturating_sub(1),
     }
 }
 
@@ -210,7 +210,7 @@ mod tests {
                     location: Location::Inherited,
                     through: vec!["c".to_owned()],
                     example: "a::A".to_owned(),
-                    more: 1,
+                    further_items: 1,
                 },
                 Exposure {
                     dependency: "b".to_owned(),
@@ -218,7 +218,7 @@ mod tests {
                     location: Location::Own,
                     through: vec![],
                     example: "b::B".to_owned(),
-                    more: 0,
+                    further_items: 0,
                 },
             ]
         );
@@ -261,7 +261,7 @@ mod tests {
             unreachable!()
         }
 
-        fn foreign_items(
+        fn package_grouped_foreign_paths(
             &self,
             library: &Package,
         ) -> anyhow::Result<BTreeMap<String, BTreeSet<String>>> {

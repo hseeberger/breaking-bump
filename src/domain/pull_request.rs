@@ -1,4 +1,4 @@
-use crate::domain::bot::Bot;
+use crate::domain::{bot::Bot, package::is_manifest};
 use std::path::Path;
 use thiserror::Error;
 
@@ -52,7 +52,7 @@ pub(crate) enum PullRequestState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Marking {
+pub(crate) struct Rewrite {
     pub(crate) message: String,
     pub(crate) parent: String,
     pub(crate) title: Option<String>,
@@ -78,26 +78,22 @@ where
     PullRequestState::Ready
 }
 
-pub(crate) fn marking<B>(
+pub(crate) fn rewrite<B>(
     bot: &B,
     pull_request: &PullRequest,
     commit: &Commit,
-) -> Result<Marking, Refusal>
+) -> Result<Rewrite, Refusal>
 where
     B: Bot,
 {
     let [parent] = commit.parents.as_slice() else {
         return Err(Refusal::NotSingleParent(commit.parents.len()));
     };
-    let changes_manifest = commit.files.iter().any(|file| {
-        Path::new(file)
-            .file_name()
-            .is_some_and(|name| name == "Cargo.toml")
-    });
+    let changes_manifest = commit.files.iter().any(|file| is_manifest(Path::new(file)));
     if !changes_manifest {
         return Err(Refusal::NoManifest);
     }
-    Ok(Marking {
+    Ok(Rewrite {
         message: bot.marked_message(&commit.message)?,
         parent: parent.clone(),
         title: bot.marked_title(&pull_request.title)?,
@@ -109,7 +105,7 @@ mod tests {
     use crate::domain::{
         bot::Dependabot,
         pull_request::{
-            Commit, Marking, PullRequest, PullRequestState, Refusal, marking, pull_request_state,
+            Commit, PullRequest, PullRequestState, Refusal, Rewrite, pull_request_state, rewrite,
         },
     };
 
@@ -120,8 +116,8 @@ mod tests {
             PullRequestState::Ready
         );
         assert_eq!(
-            marking(&Dependabot, &pull_request(), &commit()),
-            Ok(Marking {
+            rewrite(&Dependabot, &pull_request(), &commit()),
+            Ok(Rewrite {
                 message: "build(deps)!: bump dep".to_owned(),
                 parent: "parent".to_owned(),
                 title: Some("build(deps)!: bump dep".to_owned()),
@@ -207,7 +203,7 @@ mod tests {
             ),
         ];
         for (pull_request, commit, refusal) in cases {
-            assert_eq!(marking(&Dependabot, &pull_request, &commit), Err(refusal));
+            assert_eq!(rewrite(&Dependabot, &pull_request, &commit), Err(refusal));
         }
     }
 

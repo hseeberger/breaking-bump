@@ -1,11 +1,11 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Conventional<'a> {
+pub(crate) struct ConventionalSubject<'a> {
     pub(crate) prefix: &'a str,
     pub(crate) marked: bool,
     pub(crate) rest: &'a str,
 }
 
-impl<'a> Conventional<'a> {
+impl<'a> ConventionalSubject<'a> {
     pub(crate) fn parse(subject: &'a str) -> Option<Self> {
         let mut end = subject
             .find(|c: char| !c.is_ascii_alphabetic())
@@ -36,7 +36,7 @@ impl<'a> Conventional<'a> {
 
 pub(crate) fn is_marked(message: &str) -> bool {
     let subject = message.lines().next().unwrap_or_default();
-    let marked_subject = Conventional::parse(subject).is_some_and(|subject| subject.marked);
+    let marked_subject = ConventionalSubject::parse(subject).is_some_and(|subject| subject.marked);
     marked_subject
         || message.lines().any(|line| {
             line.starts_with("BREAKING CHANGE:") || line.starts_with("BREAKING-CHANGE:")
@@ -45,7 +45,7 @@ pub(crate) fn is_marked(message: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::domain::marker::{Conventional, is_marked};
+    use crate::domain::marker::{ConventionalSubject, is_marked};
 
     #[test]
     fn marked_messages() {
@@ -60,12 +60,12 @@ mod tests {
 
     #[test]
     fn conventional_subjects() {
-        let subject = Conventional::parse("build(deps): bump utoipa").unwrap();
+        let subject = ConventionalSubject::parse("build(deps): bump utoipa").unwrap();
         assert_eq!(subject.prefix, "build(deps)");
         assert!(!subject.marked);
         assert_eq!(subject.with_marker(), "build(deps)!: bump utoipa");
 
-        let subject = Conventional::parse("fix!: x").unwrap();
+        let subject = ConventionalSubject::parse("fix!: x").unwrap();
         assert_eq!(subject.prefix, "fix");
         assert!(subject.marked);
 
@@ -76,7 +76,7 @@ mod tests {
             ": x",
             "build deps: x",
         ] {
-            assert_eq!(Conventional::parse(subject), None, "{subject}");
+            assert_eq!(ConventionalSubject::parse(subject), None, "{subject}");
         }
     }
 }

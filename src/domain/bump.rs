@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Bump {
-    pub(crate) package: String,
+    pub(crate) dependent: String,
     pub(crate) dependency: String,
     pub(crate) old: VersionReq,
     pub(crate) new: VersionReq,
@@ -50,7 +50,7 @@ pub(crate) fn incompatible_bumps(old: &Workspace, new: &Workspace) -> Result<Vec
             }
             if requirement_key(old_requirement)? != requirement_key(new_requirement)? {
                 bumps.push(Bump {
-                    package: package.name.clone(),
+                    dependent: package.name.clone(),
                     dependency: dependency.to_owned(),
                     old: (*old_requirement).clone(),
                     new: new_requirement.clone(),
@@ -84,6 +84,7 @@ mod tests {
         package::{Dependency, Location, Package, Workspace},
     };
     use semver::{Version, VersionReq};
+    use serde_json::Value;
 
     #[test]
     fn ignores_workspace_members() {
@@ -92,7 +93,7 @@ mod tests {
                 .unwrap();
         let bumps = bumps
             .iter()
-            .map(|bump| (bump.package.as_str(), bump.dependency.as_str()))
+            .map(|bump| (bump.dependent.as_str(), bump.dependency.as_str()))
             .collect::<Vec<_>>();
         assert_eq!(bumps, [("plugin", "ext")]);
     }
@@ -111,7 +112,7 @@ mod tests {
                 library: None,
                 ..package("tool", vec![dependency("serde", requirement)])
             }],
-            metadata: serde_json::Value::Null,
+            metadata: Value::Null,
         };
         let bumps = incompatible_bumps(&binary("~1.0"), &binary("~2.0")).unwrap();
         assert!(bumps.is_empty());
@@ -124,7 +125,7 @@ mod tests {
                 library,
                 ..package("tool", vec![dependency("serde", requirement)])
             }],
-            metadata: serde_json::Value::Null,
+            metadata: Value::Null,
         };
         let bumps = incompatible_bumps(&tool(None, "~1.0"), &tool(Some("tool".to_owned()), "~2.0"))
             .unwrap();
@@ -140,7 +141,7 @@ mod tests {
                     vec![dependency("core", core), dependency("ext", external)],
                 ),
             ],
-            metadata: serde_json::Value::Null,
+            metadata: Value::Null,
         }
     }
 

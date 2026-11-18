@@ -1,10 +1,14 @@
 use semver::{Version, VersionReq};
-use std::{fmt, path::PathBuf};
+use serde_json::Value;
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct Workspace {
     pub(crate) members: Vec<Package>,
-    pub(crate) metadata: serde_json::Value,
+    pub(crate) metadata: Value,
 }
 
 #[derive(Debug, Clone)]
@@ -61,4 +65,8 @@ impl fmt::Display for Location {
             Location::Inherited => f.write_str("inherited"),
         }
     }
+}
+
+pub(crate) fn is_manifest(path: &Path) -> bool {
+    path.file_name().is_some_and(|name| name == "Cargo.toml")
 }

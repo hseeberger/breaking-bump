@@ -1,4 +1,4 @@
-use crate::domain::{marker::Conventional, pull_request::Refusal};
+use crate::domain::{marker::ConventionalSubject, pull_request::Refusal};
 
 pub(crate) trait Bot {
     fn is_author(&self, login: &str) -> bool;
@@ -17,7 +17,7 @@ impl Bot for Dependabot {
 
     fn marked_message(&self, message: &str) -> Result<String, Refusal> {
         let (subject, body) = message.split_at(message.find('\n').unwrap_or(message.len()));
-        let subject = Conventional::parse(subject).ok_or(Refusal::SubjectNotConventional)?;
+        let subject = ConventionalSubject::parse(subject).ok_or(Refusal::SubjectNotConventional)?;
         if subject.marked {
             return Err(Refusal::SubjectMarked);
         }
@@ -25,7 +25,7 @@ impl Bot for Dependabot {
     }
 
     fn marked_title(&self, title: &str) -> Result<Option<String>, Refusal> {
-        let title = Conventional::parse(title).ok_or(Refusal::TitleNotConventional)?;
+        let title = ConventionalSubject::parse(title).ok_or(Refusal::TitleNotConventional)?;
         Ok((!title.marked).then(|| title.with_marker()))
     }
 }

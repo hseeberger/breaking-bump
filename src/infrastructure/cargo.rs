@@ -110,7 +110,7 @@ impl Snapshot for CargoSnapshot {
 
     fn api_items(&self, library: &Package) -> anyhow::Result<ApiItems> {
         let (doc, artifacts) = self.rustdoc(library)?;
-        let sites = rustdoc::reference_sites(&doc)?;
+        let sites = rustdoc::crate_grouped_references(&doc)?;
         let defining = defining_packages(
             &doc,
             sites.keys().copied().collect(),
@@ -131,7 +131,7 @@ impl Snapshot for CargoSnapshot {
         Ok(items)
     }
 
-    fn foreign_items(
+    fn package_grouped_foreign_paths(
         &self,
         library: &Package,
     ) -> anyhow::Result<BTreeMap<String, BTreeSet<String>>> {

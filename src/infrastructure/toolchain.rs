@@ -2,9 +2,9 @@ use crate::{application::preflight::Toolchain, infrastructure::rustdoc};
 use anyhow::{Context, bail};
 use std::{fs, process::Command};
 
-pub(crate) struct RustupToolchain;
+pub(crate) struct ActiveToolchain;
 
-impl Toolchain for RustupToolchain {
+impl Toolchain for ActiveToolchain {
     fn release(&self) -> anyhow::Result<String> {
         let output = Command::new("rustc")
             .arg("-vV")
