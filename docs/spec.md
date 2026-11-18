@@ -207,6 +207,7 @@ instead of copying them:
   commit start CI again. It never checks out the pull request.
 
 The workflow takes the nightly as input and the GitHub App's client ID and private key as secrets.
+An optional input names the tools the build needs beyond Rust, such as `protoc`.
 
 The documentation must say:
 
