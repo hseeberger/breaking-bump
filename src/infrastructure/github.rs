@@ -107,7 +107,7 @@ impl Forge for GitHub {
                 .base
                 .repo
                 .map(|repo| repo.full_name)
-                .unwrap_or_default(),
+                .with_context(|| format!("pull request {number} has no base repository"))?,
         })
     }
 
@@ -280,6 +280,16 @@ mod tests {
         );
         assert_eq!(requests[3].0, "PATCH /repos/owner/repo/pulls/7");
         assert_eq!(requests[3].2, json!({ "title": "build(deps)!: bump dep" }));
+    }
+
+    #[test]
+    fn a_pull_request_without_base_repository_is_an_error() {
+        let mut response = pull_request();
+        response["base"]["repo"] = Value::Null;
+        let (api, _requests) = serve(vec![(200, response)]);
+        let github = GitHub::new(api, "unused".to_owned(), "owner/repo", "token".to_owned());
+        let error = github.pull_request(7).unwrap_err().to_string();
+        assert!(error.contains("no base repository"), "{error}");
     }
 
     fn serve(responses: Vec<(u16, Value)>) -> (String, mpsc::Receiver<(String, String, Value)>) {

@@ -303,7 +303,7 @@ fn unknown_settings_are_an_error() {
     let head = fixture.bump("dep_sig", "2.0.0", "build(deps)!: bump dep_sig");
     let run = fixture.check(&base, &head);
     run.assert(3, "error", "");
-    assert!(run.stdout.contains("breaking-bump"), "{run}");
+    assert!(run.stderr.contains("breaking-bump"), "{run}");
 }
 
 #[test]
@@ -362,7 +362,7 @@ fn missing_default_base_is_an_error() {
     let fixture = Fixture::new();
     let run = fixture.run(&["check"]);
     run.assert(3, "error", "");
-    assert!(run.stdout.contains("--base"), "{run}");
+    assert!(run.stderr.contains("--base"), "{run}");
 }
 
 #[test]
@@ -388,7 +388,7 @@ fn stable_toolchain_is_rejected() {
     command.args(["breaking-bump", "check", "--base", "HEAD"]);
     let run = fixture.execute(command, Some(&stable()));
     assert_eq!(run.code, 3, "{run}");
-    assert!(run.stdout.contains("cargo +nightly"), "{run}");
+    assert!(run.stderr.contains("cargo +nightly"), "{run}");
 }
 
 #[test]
