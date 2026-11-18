@@ -46,10 +46,8 @@ contribute the change under the project's license, as the
 
 ## Code and documentation
 
-[docs/spec.md](docs/spec.md) specifies the behavior and [docs/design.md](docs/design.md) explains
-the implementation. Read the relevant part before changing the code it describes, and keep both
-and the README consistent with your change. [AGENTS.md](AGENTS.md) lists the things that are easy
-to break.
+The [README](README.md) describes the behavior; keep it consistent with your change.
+[AGENTS.md](AGENTS.md) describes the architecture and lists the things that are easy to break.
 
 A change in behavior comes with a test. The integration tests in [tests](tests) cover a check end
 to end; a new case usually is a new option of the fixture in

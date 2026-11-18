@@ -5,9 +5,8 @@ This file provides guidance to coding agents when working with code in this repo
 ## What this is
 
 `cargo-breaking-bump`, a Cargo subcommand (binary crate only) with the subcommands `check`, `mark`
-and `exposed`, plus the reusable workflow `.github/workflows/breaking-bump.yml`. `docs/spec.md`
-is the specification, and `docs/design.md` explains how the implementation works and why. The
-README describes the behavior for users. Keep all three in sync when behavior changes.
+and `exposed`, plus the reusable workflow `.github/workflows/breaking-bump.yml`. The README
+describes the behavior for users. Keep it in sync when behavior changes.
 
 It replaces the Python tool hseeberger/public-deps-check and keeps its analysis.
 
