@@ -86,4 +86,5 @@ release-plz, as in the other crates of hseeberger. The reusable workflow reads t
 
 `release-binaries.yml` attaches the binaries for cargo-binstall to each GitHub release, named as
 `[package.metadata.binstall]` in `Cargo.toml` expects. A rerun skips uploaded assets; the
-`replace` input replaces them.
+`replace` input replaces them. The reusable workflow installs these binaries and never builds
+from source, so at a release commit it works only once they are uploaded.

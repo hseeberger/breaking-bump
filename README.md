@@ -120,9 +120,9 @@ The `toolchain` job derives the nightly from the date of the stable toolchain th
 The workflow has two jobs:
 
 - **Check** runs `check` on the pull request. It gets no secrets and only `contents: read`. It
-  installs the version of breaking-bump that `Cargo.toml` declares at the workflow's own commit,
-  so pinning the workflow also pins the tool. Make "Breaking Bump / Check" a required status
-  check.
+  installs the prebuilt binary of the version of breaking-bump that `Cargo.toml` declares at the
+  workflow's own commit, with cargo-binstall, so pinning the workflow also pins the tool. Make
+  "Breaking Bump / Check" a required status check.
 - **Mark** runs `mark` when `missing-marker` is the only kind of violation and the pull request
   comes from Dependabot. It never checks out the pull request.
 
@@ -148,9 +148,12 @@ title keeps a `!` for a commit that `mark` never marked. Check the title before 
 ### Locally
 
 ```sh
-cargo install cargo-breaking-bump --locked
+cargo binstall cargo-breaking-bump
 cargo +nightly-2026-11-09 breaking-bump check
 ```
+
+Releases come with binaries for Linux (x86_64 and aarch64) and macOS (aarch64). On other
+platforms, `cargo install cargo-breaking-bump --locked` builds from source.
 
 `check` gives the answer CI would give, for the commits of the current branch. `exposed` lists the
 dependencies in the public API of your crates, which is a good first look at a workspace:

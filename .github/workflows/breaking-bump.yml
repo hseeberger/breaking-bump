@@ -70,12 +70,18 @@ jobs:
         with:
           prefix-key: breaking-bump
 
+      - name: Install cargo-binstall
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-binstall
+
       - name: Install breaking-bump
         env:
-          NIGHTLY: ${{ inputs.nightly }}
+          GITHUB_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          cargo "+$NIGHTLY" install cargo-breaking-bump --version "$VERSION" --locked
+          cargo binstall "cargo-breaking-bump@$VERSION" --no-confirm \
+            --disable-strategies quick-install,compile
 
       - name: Check
         id: check
@@ -103,11 +109,18 @@ jobs:
           client-id: ${{ secrets.app-client-id }}
           private-key: ${{ secrets.app-private-key }}
 
+      - name: Install cargo-binstall
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-binstall
+
       - name: Install breaking-bump
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.check.outputs.version }}
         run: |
-          cargo install cargo-breaking-bump --version "$VERSION" --locked
+          cargo binstall "cargo-breaking-bump@$VERSION" --no-confirm \
+            --disable-strategies quick-install,compile
 
       - name: Mark
         env:
