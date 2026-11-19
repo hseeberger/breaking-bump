@@ -1,0 +1,110 @@
+name: Release binaries
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build and upload binaries for, e.g. v0.1.2
+        required: true
+        type: string
+      replace:
+        description: Replace assets that are already uploaded
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  TAG: ${{ inputs.tag || github.event.release.tag_name }}
+  REPLACE: ${{ inputs.replace || false }}
+
+concurrency:
+  group: release-binaries-${{ inputs.tag || github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+    env:
+      ASSET: cargo-breaking-bump-${{ matrix.target }}.tar.gz
+      TARGET: ${{ matrix.target }}
+    steps:
+      - name: Check for an uploaded asset
+        id: asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          uploaded=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | select(.state == "uploaded") | .name')
+          if grep -qxF "$ASSET" <<< "$uploaded" && [ "$REPLACE" != "true" ]; then
+            echo "$ASSET is already uploaded to $TAG, skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout repository
+        if: steps.asset.outputs.skip != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          persist-credentials: false
+
+      - name: Output toolchain
+        if: steps.asset.outputs.skip != 'true'
+        id: toolchain
+        run: |
+          toolchain=$(grep channel rust-toolchain.toml | sed -E 's/channel = "(.*)"/\1/')
+          echo "toolchain=$toolchain" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Install Rust
+        if: steps.asset.outputs.skip != 'true'
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.toolchain }}
+          targets: ${{ matrix.target }}
+
+      - name: Install musl-tools
+        if: steps.asset.outputs.skip != 'true' && runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Build
+        if: steps.asset.outputs.skip != 'true'
+        run: |
+          cargo build --release --locked --target "$TARGET"
+
+      - name: Package
+        if: steps.asset.outputs.skip != 'true'
+        run: |
+          tar -czf "$ASSET" -C "target/$TARGET/release" cargo-breaking-bump
+
+      - name: Upload
+        if: steps.asset.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$REPLACE" = "true" ]; then
+            gh release upload "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release upload "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY"
+          fi

@@ -83,3 +83,7 @@ toolchain. The table of supported toolchains in the README gets a row for that r
 
 release-plz, as in the other crates of hseeberger. The reusable workflow reads the version from
 `Cargo.toml` at its own commit, so a release needs no change to the workflow.
+
+`release-binaries.yml` attaches the binaries for cargo-binstall to each GitHub release, named as
+`[package.metadata.binstall]` in `Cargo.toml` expects. A rerun skips uploaded assets; the
+`replace` input replaces them.
