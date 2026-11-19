@@ -113,7 +113,7 @@ fn same_named_impls_in_different_modules() {
     let head = fixture.bump("dep_b", "2.0.0", "build(deps): bump dep_b");
     let run = fixture.check(&base, &head);
     run.assert(1, "breaking", "missing-marker");
-    assert!(run.stdout.contains("impl subject::first::S::get"), "{run}");
+    assert!(run.stdout.contains("<subject::first::S>::get"), "{run}");
     assert!(!run.stdout.contains("second"), "{run}");
 }
 
@@ -272,7 +272,10 @@ fn bump_at_each_position_of_the_public_api() {
         ("dep_field", "`dep_field::S` in `subject::Holder::field`"),
         ("dep_bound", "`dep_bound::Tr` in `subject::bounded`"),
         ("dep_arg", "`dep_arg::S` in `subject::listed`"),
-        ("dep_from", "`dep_from::S` in `impl "),
+        (
+            "dep_from",
+            "`dep_from::S` in `<subject::Local as core::convert::From<dep_from::S>>`",
+        ),
         (
             "dep_variant",
             "`dep_variant::S` in `subject::Choice::Variant",

@@ -38,11 +38,11 @@ utoipa 5 would have received 0.4.7 with a plain `cargo update`. From then on the
 implement the `ToSchema` of utoipa 6, a different trait than the `ToSchema` of utoipa 5, and the
 crate would no longer compile wherever it uses the two together.
 
-This is what breaking-bump 0.1.1 prints for the commit of that pull request:
+This is what breaking-bump prints for the commit of that pull request:
 
 ```console
 $ cargo +nightly-2026-11-09 breaking-bump check --base efa16ab^ --head efa16ab
-error-ext: bumping utoipa from ^5.5 to ^6.0 (own) changes utoipa from 5.5.0 to 6.0.0 in the public API: `utoipa::ToSchema` in `impl utoipa::ToSchema for error_ext::axum::Error`, `utoipa::openapi::RefOr` in `impl utoipa::ToSchema for error_ext::axum::Error::schemas`, `utoipa::openapi::schema::Schema` in `impl utoipa::ToSchema for error_ext::axum::Error::schemas` and 5 more
+error-ext: bumping utoipa from ^5.5 to ^6.0 (own) changes utoipa from 5.5.0 to 6.0.0 in the public API: `utoipa::ToSchema` in `<error_ext::axum::Error as utoipa::ToSchema>`, `utoipa::openapi::RefOr` in `<error_ext::axum::Error as utoipa::ToSchema>::schemas`, `utoipa::openapi::schema::Schema` in `<error_ext::axum::Error as utoipa::ToSchema>::schemas` and 5 more
   missing-marker: no commit since the merge base that changes Cargo.toml is marked; mark one with `!` (`type!:` or `type(scope)!:`) or a `BREAKING CHANGE:` footer
 result: breaking
 $ echo $?
