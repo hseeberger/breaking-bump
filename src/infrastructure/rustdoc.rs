@@ -182,8 +182,8 @@ fn site(doc: &Crate, parents: &HashMap<Id, Id>, sites: &mut HashMap<Id, String>,
             (ItemEnum::Impl(implementation), _) => {
                 let implemented = type_text(&implementation.for_, doc);
                 match &implementation.trait_ {
-                    Some(trait_) => format!("impl {} for {implemented}", path_text(trait_, doc)),
-                    None => format!("impl {implemented}"),
+                    Some(trait_) => format!("<{implemented} as {}>", path_text(trait_, doc)),
+                    None => format!("<{implemented}>"),
                 }
             }
             (_, Some(summary)) if summary.crate_id == 0 => summary.path.join("::"),
