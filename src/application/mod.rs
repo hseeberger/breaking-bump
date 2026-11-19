@@ -9,7 +9,7 @@ use crate::domain::{
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 pub(crate) trait Cargo {
@@ -17,7 +17,7 @@ pub(crate) trait Cargo {
 
     fn workspace(&self, directory: &Path) -> anyhow::Result<Workspace>;
 
-    fn snapshot(&self, directory: &Path) -> anyhow::Result<Self::Snapshot>;
+    fn snapshot(&self, workspace_root: &Path, target_dir: &Path) -> anyhow::Result<Self::Snapshot>;
 }
 
 pub(crate) trait Snapshot {
@@ -40,4 +40,8 @@ pub(crate) trait Snapshot {
     fn package_name(&self, package_id: &str) -> &str;
 
     fn package_version(&self, package_id: &str) -> String;
+}
+
+pub(crate) fn default_target_dir(workspace_root: &Path) -> PathBuf {
+    workspace_root.join("target").join("breaking-bump")
 }

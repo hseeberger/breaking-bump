@@ -1,5 +1,5 @@
 use crate::{
-    application::{Cargo, Snapshot},
+    application::{Cargo, Snapshot, default_target_dir},
     domain::{
         Undecided,
         bump::{Bump, incompatible_bumps},
@@ -22,6 +22,8 @@ use std::{
 pub(crate) trait Repository {
     type Worktree: Worktree;
 
+    fn root(&self) -> &Path;
+
     fn commit(&self, revision: &str) -> anyhow::Result<String>;
 
     fn default_base(&self) -> anyhow::Result<Option<String>>;
@@ -34,12 +36,14 @@ pub(crate) trait Repository {
 
     fn worktree(&self, commit: &str) -> anyhow::Result<Self::Worktree>;
 
-    // `path` is relative to the workspace directory; history is not simplified.
+    // `path` is relative to the repository root; history is not simplified.
     fn messages(&self, from: &str, to: &str, path: &Path) -> anyhow::Result<Vec<String>>;
 }
 
 pub(crate) trait Worktree {
-    fn workspace(&self) -> &Path;
+    fn root(&self) -> &Path;
+
+    fn directory(&self) -> &Path;
 }
 
 #[derive(Debug)]
@@ -94,7 +98,13 @@ pub(crate) struct JudgedFinding {
     pub(crate) violations: Vec<Violation>,
 }
 
-pub(crate) fn check<R, C>(repository: &R, cargo: &C, base: Option<&str>, head: &str) -> Report
+pub(crate) fn check<R, C>(
+    repository: &R,
+    cargo: &C,
+    base: Option<&str>,
+    head: &str,
+    target_dir: Option<&Path>,
+) -> Report
 where
     R: Repository,
     C: Cargo,
@@ -104,7 +114,7 @@ where
         Err(error) => return Report::error(error),
     };
     let mut warnings = Vec::new();
-    let outcome = match compare(repository, cargo, base, &head, &mut warnings) {
+    let outcome = match compare(repository, cargo, base, &head, target_dir, &mut warnings) {
         Ok(outcome) => outcome,
         Err(error) => match error.downcast::<Undecided>() {
             Ok(undecided) => Outcome::Undecided(undecided.0),
@@ -123,6 +133,7 @@ fn compare<R, C>(
     cargo: &C,
     base: Option<&str>,
     head: &str,
+    target_dir: Option<&Path>,
     warnings: &mut Vec<String>,
 ) -> anyhow::Result<Outcome>
 where
@@ -153,8 +164,17 @@ where
 
     let old_tree = repository.worktree(&merge_base)?;
     let new_tree = repository.worktree(head)?;
-    let old_workspace = cargo.workspace(old_tree.workspace())?;
-    let new_workspace = cargo.workspace(new_tree.workspace())?;
+    let new_workspace = cargo.workspace(new_tree.directory())?;
+    let workspace_path = new_workspace
+        .root
+        .strip_prefix(new_tree.root())
+        .with_context(|| {
+            format!(
+                "workspace root {} is outside of the worktree",
+                new_workspace.root.display()
+            )
+        })?;
+    let old_workspace = cargo.workspace(&old_tree.root().join(workspace_path))?;
     let settings = Settings::from_workspace_metadata(&old_workspace.metadata)?;
     let bumps = incompatible_bumps(&old_workspace, &new_workspace)?;
     if bumps.is_empty() {
@@ -163,20 +183,36 @@ where
         ));
     }
 
-    let old = cargo.snapshot(old_tree.workspace())?;
-    let new = cargo.snapshot(new_tree.workspace())?;
-    let findings = findings(&old, &new, &bumps, new_tree.workspace())?;
+    let target_dir = match target_dir {
+        Some(target_dir) => target_dir.to_path_buf(),
+        None => default_target_dir(&repository.root().join(workspace_path)),
+    };
+    let old = cargo.snapshot(&old_workspace.root, &target_dir)?;
+    let new = cargo.snapshot(&new_workspace.root, &target_dir)?;
+    let findings = findings(&old, &new, &bumps, &new_workspace.root)?;
     if findings.is_empty() {
         return Ok(Outcome::Compatible(
             "no public API item changed to an incompatible version".to_owned(),
         ));
     }
 
-    let findings = judged_findings(repository, &settings, &merge_base, head, findings)?;
+    let findings = judged_findings(
+        repository,
+        &settings,
+        &merge_base,
+        head,
+        workspace_path,
+        findings,
+    )?;
     Ok(Outcome::Breaking(findings))
 }
 
-fn findings<S>(old: &S, new: &S, bumps: &[Bump], workspace: &Path) -> anyhow::Result<Vec<Finding>>
+fn findings<S>(
+    old: &S,
+    new: &S,
+    bumps: &[Bump],
+    workspace_root: &Path,
+) -> anyhow::Result<Vec<Finding>>
 where
     S: Snapshot,
 {
@@ -197,7 +233,7 @@ where
             .collect::<Vec<_>>();
         let manifest = new_library
             .manifest
-            .strip_prefix(workspace)
+            .strip_prefix(workspace_root)
             .with_context(|| {
                 format!(
                     "manifest {} is outside of the workspace",
@@ -322,6 +358,7 @@ fn judged_findings<R>(
     settings: &Settings,
     merge_base: &str,
     head: &str,
+    workspace_path: &Path,
     findings: Vec<Finding>,
 ) -> anyhow::Result<Vec<JudgedFinding>>
 where
@@ -335,7 +372,7 @@ where
                 Some(marked) => *marked,
                 None => {
                     let marked = repository
-                        .messages(merge_base, head, &finding.manifest)?
+                        .messages(merge_base, head, &workspace_path.join(&finding.manifest))?
                         .iter()
                         .any(|message| is_marked(message));
                     manifest_marks.insert(finding.manifest.clone(), marked);
@@ -501,6 +538,8 @@ mod tests {
                     .into_iter()
                     .map(|name| Dependency {
                         name: name.to_owned(),
+                        key: name.to_owned(),
+                        target: None,
                         requirement: VersionReq::parse(version).unwrap(),
                         location: Location::Own,
                     })

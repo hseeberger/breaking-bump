@@ -81,7 +81,7 @@ fn branch_that_moves_after_the_title_edit_is_left_alone() {
     );
     assert!(
         run.stdout
-            .contains("the pull request title already has the `!`"),
+            .contains("check whether the `!` still belongs in the pull request title"),
         "{run}"
     );
     assert_eq!(forge.branch(), forge.newer);

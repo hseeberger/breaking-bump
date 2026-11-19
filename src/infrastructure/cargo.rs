@@ -23,15 +23,7 @@ use std::{
 
 const STD_CRATES: [&str; 5] = ["std", "core", "alloc", "proc_macro", "test"];
 
-pub(crate) struct CargoCli {
-    target_dir: PathBuf,
-}
-
-impl CargoCli {
-    pub(crate) fn new(target_dir: PathBuf) -> Self {
-        Self { target_dir }
-    }
-}
+pub(crate) struct CargoCli;
 
 impl Cargo for CargoCli {
     type Snapshot = CargoSnapshot;
@@ -39,13 +31,14 @@ impl Cargo for CargoCli {
     fn workspace(&self, directory: &Path) -> anyhow::Result<Workspace> {
         let metadata = metadata(directory, true)?;
         Ok(Workspace {
+            root: metadata.workspace_root.clone().into_std_path_buf(),
             members: members(&metadata)?,
             metadata: metadata.workspace_metadata.clone(),
         })
     }
 
-    fn snapshot(&self, directory: &Path) -> anyhow::Result<CargoSnapshot> {
-        let metadata = metadata(directory, false)?;
+    fn snapshot(&self, workspace_root: &Path, target_dir: &Path) -> anyhow::Result<CargoSnapshot> {
+        let metadata = metadata(workspace_root, false)?;
         let resolve = metadata
             .resolve
             .as_ref()
@@ -84,8 +77,8 @@ impl Cargo for CargoCli {
             .filter(Package::is_published_library)
             .collect();
         Ok(CargoSnapshot {
-            directory: directory.to_path_buf(),
-            target_dir: self.target_dir.clone(),
+            directory: workspace_root.to_path_buf(),
+            target_dir: target_dir.to_path_buf(),
             sysroot: sysroot()?,
             packages,
             normal_dependencies,
@@ -199,9 +192,9 @@ impl Snapshot for CargoSnapshot {
 
 impl CargoSnapshot {
     fn rustdoc(&self, library: &Package) -> anyhow::Result<(Crate, HashMap<PathBuf, String>)> {
-        let Some(crate_name) = &library.library else {
+        if library.library.is_none() {
             bail!("{} has no library", library.name);
-        };
+        }
         let mut child = Command::new(cargo())
             .arg("rustdoc")
             .args(["--quiet", "--message-format", "json", "--manifest-path"])
@@ -210,7 +203,7 @@ impl CargoSnapshot {
             .arg(format!("{}@{}", library.name, library.version))
             .args(["--lib", "--all-features", "--target-dir"])
             .arg(&self.target_dir)
-            .args(["--", "-Zunstable-options", "--output-format", "json"])
+            .args(["-Zunstable-options", "--output-format", "json"])
             .current_dir(&self.directory)
             .stdout(Stdio::piped())
             .spawn()
@@ -222,12 +215,7 @@ impl CargoSnapshot {
             bail!("cargo rustdoc failed for {} ({status})", library.name);
         }
         let artifacts = artifacts?;
-        let doc = rustdoc::read(
-            &self
-                .target_dir
-                .join("doc")
-                .join(format!("{crate_name}.json")),
-        )?;
+        let doc = rustdoc::read(&rustdoc_json_path(&artifacts, library)?)?;
         Ok((doc, artifacts))
     }
 }
@@ -271,6 +259,32 @@ where
     match first_error {
         Some(error) => Err(error),
         None => Ok(artifacts),
+    }
+}
+
+fn rustdoc_json_path(
+    artifacts: &HashMap<PathBuf, String>,
+    library: &Package,
+) -> anyhow::Result<PathBuf> {
+    let mut paths = artifacts
+        .iter()
+        .filter(|(path, id)| {
+            **id == library.id
+                && path
+                    .extension()
+                    .is_some_and(|extension| extension == "json")
+        })
+        .map(|(path, _)| path);
+    match (paths.next(), paths.next()) {
+        (Some(path), None) => Ok(path.clone()),
+        (None, _) => bail!(
+            "cargo rustdoc reported no rustdoc JSON for {}",
+            library.name
+        ),
+        (Some(_), Some(_)) => bail!(
+            "cargo rustdoc reported several rustdoc JSON files for {}",
+            library.name
+        ),
     }
 }
 
@@ -332,10 +346,7 @@ fn defining_packages(
 
 fn metadata(directory: &Path, no_deps: bool) -> anyhow::Result<Metadata> {
     let mut command = MetadataCommand::new();
-    command
-        .cargo_path(cargo())
-        .manifest_path(directory.join("Cargo.toml"))
-        .current_dir(directory);
+    command.cargo_path(cargo()).current_dir(directory);
     if no_deps {
         command.no_deps();
     } else {
@@ -365,6 +376,8 @@ fn package(package: &cargo_metadata::Package) -> anyhow::Result<Package> {
             let key = dependency.rename.as_ref().unwrap_or(&dependency.name);
             Dependency {
                 name: dependency.name.clone(),
+                key: key.clone(),
+                target: dependency.target.as_ref().map(ToString::to_string),
                 requirement: dependency.req.clone(),
                 location: if inherited.contains(key) {
                     Location::Inherited

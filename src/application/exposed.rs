@@ -1,5 +1,5 @@
 use crate::{
-    application::{Cargo, Snapshot},
+    application::{Cargo, Snapshot, default_target_dir},
     domain::{
         Undecided,
         package::{Location, Package},
@@ -46,11 +46,21 @@ pub(crate) struct Exposure {
     pub(crate) further_items: usize,
 }
 
-pub(crate) fn exposed<C>(cargo: &C, directory: &Path, packages: &[String]) -> anyhow::Result<Audit>
+pub(crate) fn exposed<C>(
+    cargo: &C,
+    directory: &Path,
+    packages: &[String],
+    target_dir: Option<&Path>,
+) -> anyhow::Result<Audit>
 where
     C: Cargo,
 {
-    let snapshot = cargo.snapshot(directory)?;
+    let workspace = cargo.workspace(directory)?;
+    let target_dir = match target_dir {
+        Some(target_dir) => target_dir.to_path_buf(),
+        None => default_target_dir(&workspace.root),
+    };
+    let snapshot = cargo.snapshot(&workspace.root, &target_dir)?;
     for package in packages {
         if !snapshot
             .libraries()
@@ -187,6 +197,7 @@ mod tests {
         },
     };
     use semver::{Version, VersionReq};
+    use serde_json::Value;
     use std::{
         collections::{BTreeMap, BTreeSet},
         path::Path,
@@ -194,7 +205,7 @@ mod tests {
 
     #[test]
     fn an_unmapped_crate_leaves_the_rest_of_the_audit() {
-        let audit = exposed(&Fake, Path::new("."), &[]).unwrap();
+        let audit = exposed(&Fake, Path::new("."), &[], None).unwrap();
         assert!(!audit.is_complete());
         assert_eq!(audit.libraries.len(), 2);
         assert!(matches!(&audit.libraries[0].verdict, Verdict::Undecided(_)));
@@ -226,10 +237,10 @@ mod tests {
 
     #[test]
     fn restricts_the_audit_to_the_given_packages() {
-        let audit = exposed(&Fake, Path::new("."), &["good".to_owned()]).unwrap();
+        let audit = exposed(&Fake, Path::new("."), &["good".to_owned()], None).unwrap();
         assert!(audit.is_complete());
         assert_eq!(audit.libraries.len(), 1);
-        assert!(exposed(&Fake, Path::new("."), &["unknown".to_owned()]).is_err());
+        assert!(exposed(&Fake, Path::new("."), &["unknown".to_owned()], None).is_err());
     }
 
     struct Fake;
@@ -241,11 +252,19 @@ mod tests {
     impl Cargo for Fake {
         type Snapshot = FakeSnapshot;
 
-        fn workspace(&self, _directory: &Path) -> anyhow::Result<Workspace> {
-            unreachable!()
+        fn workspace(&self, directory: &Path) -> anyhow::Result<Workspace> {
+            Ok(Workspace {
+                root: directory.to_path_buf(),
+                members: vec![],
+                metadata: Value::Null,
+            })
         }
 
-        fn snapshot(&self, _directory: &Path) -> anyhow::Result<FakeSnapshot> {
+        fn snapshot(
+            &self,
+            _workspace_root: &Path,
+            _target_dir: &Path,
+        ) -> anyhow::Result<FakeSnapshot> {
             Ok(FakeSnapshot {
                 libraries: vec![library("bad"), library("good")],
             })
@@ -309,11 +328,15 @@ mod tests {
             dependencies: vec![
                 Dependency {
                     name: "a".to_owned(),
+                    key: "a".to_owned(),
+                    target: None,
                     requirement: VersionReq::parse("^1").unwrap(),
                     location: Location::Inherited,
                 },
                 Dependency {
                     name: "b".to_owned(),
+                    key: "b".to_owned(),
+                    target: None,
                     requirement: VersionReq::parse("^1").unwrap(),
                     location: Location::Own,
                 },

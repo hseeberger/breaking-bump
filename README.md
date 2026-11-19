@@ -221,8 +221,8 @@ When `GITHUB_OUTPUT` is set, `check` also writes `result`, `violations` (the kin
 comma-separated) and `head` (the checked commit) to it.
 
 `check` builds the dependencies of the commits it checks, and their build scripts run arbitrary
-code. Run it without secrets. It uses `target/breaking-bump` as its target directory, or
-`CARGO_TARGET_DIR` when set.
+code. Run it without secrets. It uses `target/breaking-bump` in the workspace root as its target
+directory, or `CARGO_TARGET_DIR` when set.
 
 ### When the result is undecided
 
@@ -232,7 +232,8 @@ These are the cases:
 - A changed requirement is not a plain caret requirement, for example `~1.2`, `=1.2.3`,
   `>=1, <3`, `*` or the prerelease `^2.0.0-rc.1`. Writing the requirement as a plain version
   (`1.2`) resolves this case.
-- A crate declares several different requirements for the same dependency.
+- A crate declares several different requirements for the same dependency, for example under two
+  names for two majors, and these requirements change.
 - A crate that appears in the public API cannot be mapped to a Cargo package.
 - Two public items with the same name refer to the same path in different crates.
 - An item changed to an incompatible version, but no bumped dependency leads to it.
