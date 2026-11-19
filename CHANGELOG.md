@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/hseeberger/breaking-bump/compare/v0.1.2...v0.1.3) - 2026-11-19
+
+### Documentation
+
+- Name the crate cargo-breaking-bump in the README ([#19](https://github.com/hseeberger/breaking-bump/pull/19))
+
+
 ## [0.1.2](https://github.com/hseeberger/breaking-bump/compare/v0.1.1...v0.1.2) - 2026-11-19
 
 ### Features
