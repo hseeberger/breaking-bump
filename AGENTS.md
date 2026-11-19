@@ -5,8 +5,9 @@ This file provides guidance to coding agents when working with code in this repo
 ## What this is
 
 `cargo-breaking-bump`, a Cargo subcommand (binary crate only) with the subcommands `check`, `mark`
-and `exposed`, plus the reusable workflow `.github/workflows/breaking-bump.yml`. The README
-describes the behavior for users. Keep it in sync when behavior changes.
+and `exposed`, plus the composite action `action.yml` (commands `check` and `mark`) and the
+deprecated reusable workflow `.github/workflows/breaking-bump.yml`. The README describes the
+behavior for users. Keep it in sync when behavior changes.
 
 It replaces the Python tool hseeberger/public-deps-check and keeps its analysis.
 
@@ -72,6 +73,10 @@ Things that are easy to break:
   second parent.
 - `mark` changes the title before it pushes, so a retry can finish an interrupted run.
 - The marked commit must have no custom author or committer, otherwise GitHub does not sign it.
+- Until the reusable workflow is removed, its install steps and those of `action.yml` change
+  together.
+- `mark` in `action.yml` takes the head commit from the event, never from the check output, which
+  build code of the pull request can write.
 
 ## Upgrading rustdoc-types
 
@@ -81,10 +86,11 @@ toolchain. The table of supported toolchains in the README gets a row for that r
 
 ## Releases
 
-release-plz, as in the other crates of hseeberger. The reusable workflow reads the version from
-`Cargo.toml` at its own commit, so a release needs no change to the workflow.
+release-plz, as in the other crates of hseeberger. The action reads the version from the
+`Cargo.toml` next to it, and the reusable workflow from `Cargo.toml` at its own commit, so a
+release needs no change to either.
 
 `release-binaries.yml` attaches the binaries for cargo-binstall to each GitHub release, named as
 `[package.metadata.binstall]` in `Cargo.toml` expects. A rerun skips uploaded assets; the
-`replace` input replaces them. The reusable workflow installs these binaries and never builds
-from source, so at a release commit it works only once they are uploaded.
+`replace` input replaces them. The action and the reusable workflow install these binaries and
+never build from source, so at a release commit they work only once the binaries are uploaded.

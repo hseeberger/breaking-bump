@@ -1,0 +1,124 @@
+name: Breaking Bump
+description: Detect semver-incompatible bumps of dependencies that appear in the public API of Rust crates
+branding:
+  icon: alert-triangle
+  color: orange
+
+inputs:
+  command:
+    description: Command to run, check or mark
+    required: true
+  nightly:
+    description: Nightly toolchain that generates the rustdoc JSON, e.g. nightly-2026-11-09 (check)
+    required: false
+    default: ""
+  base:
+    description: Base commit (check)
+    required: false
+    default: ${{ github.event.pull_request.base.sha }}
+  head:
+    description: Head commit (check and mark)
+    required: false
+    default: ${{ github.event.pull_request.head.sha }}
+  pr:
+    description: Pull request number (mark)
+    required: false
+    default: ${{ github.event.pull_request.number }}
+  token:
+    description: Token of a GitHub App that may write contents and pull requests (mark)
+    required: false
+    default: ""
+
+outputs:
+  result:
+    description: Result of check, e.g. compatible or breaking
+    value: ${{ steps.check.outputs.result }}
+  violations:
+    description: Comma-separated kinds of violations of check, e.g. missing-marker
+    value: ${{ steps.check.outputs.violations }}
+  head:
+    description: Head commit that check analyzed
+    value: ${{ steps.check.outputs.head }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate inputs
+      shell: bash
+      env:
+        COMMAND: ${{ inputs.command }}
+        NIGHTLY: ${{ inputs.nightly }}
+        TOKEN: ${{ inputs.token }}
+      run: |
+        case "$COMMAND" in
+          check)
+            if [ -z "$NIGHTLY" ]; then
+              echo "::error::the check command needs the nightly input"
+              exit 1
+            fi
+            ;;
+          mark)
+            if [ -z "$TOKEN" ]; then
+              echo "::error::the mark command needs the token input"
+              exit 1
+            fi
+            ;;
+          *)
+            echo "::error::the command input must be check or mark"
+            exit 1
+            ;;
+        esac
+
+    - name: Read the breaking-bump version
+      id: version
+      shell: bash
+      run: |
+        version=$(sed -nE 's/^version *= *"([^"]+)"/\1/p' "$GITHUB_ACTION_PATH/Cargo.toml" | head -1)
+        test -n "$version"
+        echo "version=$version" | tee -a "$GITHUB_OUTPUT"
+
+    - name: Install cargo-binstall
+      uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+      with:
+        tool: cargo-binstall
+
+    - name: Install breaking-bump
+      shell: bash
+      working-directory: ${{ runner.temp }}
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        VERSION: ${{ steps.version.outputs.version }}
+      run: |
+        cargo-binstall "cargo-breaking-bump@$VERSION" --no-confirm \
+          --disable-strategies quick-install,compile
+
+    - name: Install the nightly toolchain
+      if: inputs.command == 'check'
+      shell: bash
+      working-directory: ${{ runner.temp }}
+      env:
+        NIGHTLY: ${{ inputs.nightly }}
+      run: |
+        rustup toolchain install "$NIGHTLY" --profile minimal
+
+    - name: Check
+      id: check
+      if: inputs.command == 'check'
+      shell: bash
+      env:
+        NIGHTLY: ${{ inputs.nightly }}
+        BASE: ${{ inputs.base }}
+        HEAD: ${{ inputs.head }}
+      run: |
+        cargo "+$NIGHTLY" breaking-bump check --base "$BASE" --head "$HEAD"
+
+    - name: Mark
+      if: inputs.command == 'mark'
+      shell: bash
+      working-directory: ${{ runner.temp }}
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        PR: ${{ inputs.pr }}
+        HEAD: ${{ inputs.head }}
+      run: |
+        cargo-breaking-bump breaking-bump mark --pr "$PR" --head "$HEAD"

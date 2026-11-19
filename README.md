@@ -79,9 +79,17 @@ itself.
 
 ### In CI
 
-Call the reusable workflow from the workflow that runs on your pull requests:
+Add a workflow with two jobs that use the action:
 
 ```yaml
+name: Breaking Bump
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
 jobs:
   toolchain:
     name: Setup Rust toolchain
@@ -91,6 +99,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@<sha> # vX.Y.Z
+        with:
+          persist-credentials: false
 
       - name: Output toolchain
         id: set_toolchain
@@ -98,33 +108,76 @@ jobs:
           nightly=$(rustc --version | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' | sed 's/^/nightly-/')
           echo "nightly=$nightly" | tee -a "$GITHUB_OUTPUT"
 
-  breaking-bump:
-    name: Breaking Bump
-    if: github.event_name == 'pull_request'
+  check:
+    name: Breaking Bump Check
+    runs-on: ubuntu-latest
     needs: toolchain
-    uses: hseeberger/breaking-bump/.github/workflows/breaking-bump.yml@<sha> # vX.Y.Z
     permissions:
       contents: read
-    with:
-      nightly: ${{ needs.toolchain.outputs.nightly }}
-    secrets:
-      app-client-id: ${{ secrets.APP_CLIENT_ID }}
-      app-private-key: ${{ secrets.APP_PRIVATE_KEY }}
+    outputs:
+      result: ${{ steps.breaking-bump.outputs.result }}
+      violations: ${{ steps.breaking-bump.outputs.violations }}
+      head: ${{ steps.breaking-bump.outputs.head }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@<sha> # vX.Y.Z
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check
+        id: breaking-bump
+        uses: hseeberger/breaking-bump@<sha> # vX.Y.Z
+        with:
+          command: check
+          nightly: ${{ needs.toolchain.outputs.nightly }}
+
+  mark:
+    name: Breaking Bump Mark
+    runs-on: ubuntu-latest
+    needs: check
+    if: >-
+      ${{ !cancelled()
+      && needs.check.outputs.violations == 'missing-marker'
+      && github.event.pull_request.user.login == 'dependabot[bot]' }}
+    permissions: {}
+    steps:
+      - name: Generate a token
+        id: app-token
+        uses: actions/create-github-app-token@<sha> # vX.Y.Z
+        with:
+          client-id: ${{ secrets.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Mark
+        uses: hseeberger/breaking-bump@<sha> # vX.Y.Z
+        with:
+          command: mark
+          token: ${{ steps.app-token.outputs.token }}
 ```
 
 The `toolchain` job derives the nightly from the date of the stable toolchain that
 `rust-toolchain.toml` pins. A fixed value such as `nightly: nightly-2026-11-09` works as well; see
-[Supported toolchains](#supported-toolchains). If the build needs tools beyond Rust, such as
-`protoc`, pass them as `tools`, comma-separated, to be installed with taiki-e/install-action.
+[Supported toolchains](#supported-toolchains). If the build needs more than Rust, such as
+`protoc` or a cache, add those steps to the check job before the action.
 
-The workflow has two jobs:
+The action installs the prebuilt binary of the version of breaking-bump that `Cargo.toml`
+declares at the action's own commit, with cargo-binstall, so pinning the action also pins the
+tool. The two jobs do different things:
 
-- **Check** runs `check` on the pull request. It gets no secrets and only `contents: read`. It
-  installs the prebuilt binary of the version of breaking-bump that `Cargo.toml` declares at the
-  workflow's own commit, with cargo-binstall, so pinning the workflow also pins the tool. Make
-  "Breaking Bump / Check" a required status check.
+- **Check** runs `check` on the pull request. It installs the nightly if it is missing. It gets no
+  secrets and only `contents: read`. Make "Breaking Bump Check" a required status check.
 - **Mark** runs `mark` when `missing-marker` is the only kind of violation and the pull request
   comes from Dependabot. It never checks out the pull request.
+
+Keep the two jobs separate. The check job builds the pull request, which runs its build scripts
+and proc macros, so a token in that job could leak to code nobody has reviewed. The job outputs
+must be mapped as shown, otherwise `needs.check.outputs.violations` is empty and mark never runs.
+
+If you switch from the reusable workflow `.github/workflows/breaking-bump.yml`, the required
+status check changes from "Breaking Bump / Check" to "Breaking Bump Check". Update the branch
+protection or ruleset in the same change, otherwise GitHub keeps waiting for the old check. The
+reusable workflow still works but is deprecated and will be removed.
 
 The mark job needs a GitHub App, because a commit pushed with the token of a GitHub App starts CI
 again, which a commit pushed with the workflow's own token does not:
