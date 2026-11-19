@@ -1,0 +1,11 @@
+[package]
+name = "subject"
+version = "0.1.0"
+edition = "2024"
+description = "Fixture for the breaking-bump action test"
+
+[dependencies]
+dep_sig = { path = "deps/dep_sig", version = "1.0.0" }
+
+[workspace]
+exclude = ["deps"]
