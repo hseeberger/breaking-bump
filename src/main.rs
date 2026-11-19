@@ -232,7 +232,7 @@ fn run_mark(args: MarkArgs) -> ExitCode {
     };
     let api = env::var("GITHUB_API_URL").unwrap_or_else(|_| "https://api.github.com".to_owned());
     let server = env::var("GITHUB_SERVER_URL").unwrap_or_else(|_| "https://github.com".to_owned());
-    let forge = GitHub::new(api, server, &args.repository, token);
+    let forge = GitHub::new(api, server, args.repository, token);
     match mark::mark(&forge, &Dependabot, args.pr, &args.head) {
         Ok(Marking::Marked { branch, commit }) => {
             println!("marked: {branch} now at {commit}");

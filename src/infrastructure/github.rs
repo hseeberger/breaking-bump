@@ -19,7 +19,7 @@ pub(crate) struct GitHub {
 }
 
 impl GitHub {
-    pub(crate) fn new(api: String, server: String, repository: &str, token: String) -> Self {
+    pub(crate) fn new(api: String, server: String, repository: String, token: String) -> Self {
         let agent = Agent::config_builder()
             .http_status_as_error(false)
             .timeout_global(Some(Duration::from_secs(30)))
@@ -29,7 +29,7 @@ impl GitHub {
             agent,
             api,
             server,
-            repository: repository.to_owned(),
+            repository,
             token,
         }
     }
@@ -39,11 +39,7 @@ impl GitHub {
         T: DeserializeOwned,
     {
         let response = self
-            .agent
-            .get(self.url(path))
-            .header("Accept", "application/vnd.github+json")
-            .header("Authorization", format!("Bearer {}", self.token))
-            .header("X-GitHub-Api-Version", "2022-11-28")
+            .authorized(self.agent.get(self.url(path)))
             .call()
             .with_context(|| format!("GET {path} failed"))?;
         json_body(&format!("GET {path}"), response)
@@ -80,10 +76,8 @@ impl GitHub {
     where
         T: DeserializeOwned,
     {
-        let response = request
-            .header("Accept", "application/vnd.github+json")
-            .header("Authorization", format!("Bearer {}", self.token))
-            .header("X-GitHub-Api-Version", "2022-11-28")
+        let response = self
+            .authorized(request)
             .send_json(body)
             .with_context(|| format!("{description} failed"))?;
         json_body(description, response)
@@ -91,6 +85,13 @@ impl GitHub {
 
     fn url(&self, path: &str) -> String {
         format!("{}/repos/{}{path}", self.api, self.repository)
+    }
+
+    fn authorized<B>(&self, request: RequestBuilder<B>) -> RequestBuilder<B> {
+        request
+            .header("Accept", "application/vnd.github+json")
+            .header("Authorization", format!("Bearer {}", self.token))
+            .header("X-GitHub-Api-Version", "2022-11-28")
     }
 }
 
@@ -246,7 +247,12 @@ mod tests {
                 json!({ "message": "Resource not accessible by integration" }),
             ),
         ]);
-        let github = GitHub::new(api, "unused".to_owned(), "owner/repo", "token".to_owned());
+        let github = GitHub::new(
+            api,
+            "unused".to_owned(),
+            "owner/repo".to_owned(),
+            "token".to_owned(),
+        );
 
         let pull_request = github.pull_request(7).unwrap();
         assert_eq!(pull_request.author, "dependabot[bot]");
@@ -287,7 +293,12 @@ mod tests {
         let mut response = pull_request();
         response["base"]["repo"] = Value::Null;
         let (api, _requests) = serve(vec![(200, response)]);
-        let github = GitHub::new(api, "unused".to_owned(), "owner/repo", "token".to_owned());
+        let github = GitHub::new(
+            api,
+            "unused".to_owned(),
+            "owner/repo".to_owned(),
+            "token".to_owned(),
+        );
         let error = github.pull_request(7).unwrap_err().to_string();
         assert!(error.contains("no base repository"), "{error}");
     }

@@ -220,9 +220,129 @@ impl CargoSnapshot {
     }
 }
 
+fn metadata(directory: &Path, no_deps: bool) -> anyhow::Result<Metadata> {
+    let mut command = MetadataCommand::new();
+    command.cargo_path(cargo()).current_dir(directory);
+    if no_deps {
+        command.no_deps();
+    } else {
+        command.features(CargoOpt::AllFeatures);
+    }
+    command
+        .exec()
+        .with_context(|| format!("cargo metadata failed in {}", directory.display()))
+}
+
+fn cargo() -> OsString {
+    env::var_os("CARGO").unwrap_or_else(|| "cargo".into())
+}
+
+fn members(metadata: &Metadata) -> anyhow::Result<Vec<Package>> {
+    metadata
+        .workspace_packages()
+        .into_iter()
+        .map(package)
+        .collect()
+}
+
+fn package(package: &cargo_metadata::Package) -> anyhow::Result<Package> {
+    let manifest = package.manifest_path.clone().into_std_path_buf();
+    let inherited = inherited_keys(&manifest)?;
+    let dependencies = package
+        .dependencies
+        .iter()
+        .filter(|dependency| dependency.kind == DependencyKind::Normal)
+        .map(|dependency| {
+            let key = dependency.rename.as_ref().unwrap_or(&dependency.name);
+            Dependency {
+                name: dependency.name.clone(),
+                key: key.clone(),
+                target: dependency.target.as_ref().map(ToString::to_string),
+                requirement: dependency.req.clone(),
+                location: if inherited.contains(key) {
+                    Location::Inherited
+                } else {
+                    Location::Own
+                },
+            }
+        })
+        .collect();
+    let library = package
+        .targets
+        .iter()
+        .find(|target| {
+            target.kind.iter().any(|kind| {
+                matches!(
+                    kind,
+                    TargetKind::Lib | TargetKind::RLib | TargetKind::DyLib | TargetKind::ProcMacro
+                )
+            })
+        })
+        .map(|target| target.name.replace('-', "_"));
+    Ok(Package {
+        id: package.id.repr.clone(),
+        name: package.name.to_string(),
+        version: package.version.clone(),
+        library,
+        published: package
+            .publish
+            .as_ref()
+            .is_none_or(|registries| !registries.is_empty()),
+        manifest,
+        dependencies,
+    })
+}
+
+fn inherited_keys(manifest: &Path) -> anyhow::Result<BTreeSet<String>> {
+    let text = fs::read_to_string(manifest)
+        .with_context(|| format!("cannot read {}", manifest.display()))?;
+    let manifest = text
+        .parse::<toml::Table>()
+        .with_context(|| format!("cannot parse {}", manifest.display()))?;
+    let targets = manifest
+        .get("target")
+        .and_then(|targets| targets.as_table())
+        .into_iter()
+        .flat_map(|targets| targets.values())
+        .filter_map(|target| target.get("dependencies"));
+    let tables = manifest
+        .get("dependencies")
+        .into_iter()
+        .chain(targets)
+        .filter_map(|table| table.as_table());
+    let mut keys = BTreeSet::new();
+    for table in tables {
+        for (key, spec) in table {
+            let inherited = spec
+                .get("workspace")
+                .and_then(|workspace| workspace.as_bool())
+                .unwrap_or_default();
+            if inherited {
+                keys.insert(key.clone());
+            }
+        }
+    }
+    Ok(keys)
+}
+
 struct Summary {
     name: String,
     version: Version,
+}
+
+fn sysroot() -> anyhow::Result<PathBuf> {
+    let output = Command::new("rustc")
+        .args(["--print", "sysroot"])
+        .output()
+        .context("cannot run rustc")?;
+    if !output.status.success() {
+        bail!(
+            "rustc --print sysroot failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    let sysroot = String::from_utf8(output.stdout)?;
+    fs::canonicalize(sysroot.trim()).context("cannot resolve the sysroot")
 }
 
 // Reads to the end of the stream even after an error, unless reading itself fails.
@@ -335,133 +455,13 @@ fn defining_packages(
         defining.insert(
             crate_id,
             DefiningPackage {
+                id: id.clone(),
                 name: summary.name.clone(),
                 version: summary.version.clone(),
-                id: id.clone(),
             },
         );
     }
     Ok(defining)
-}
-
-fn metadata(directory: &Path, no_deps: bool) -> anyhow::Result<Metadata> {
-    let mut command = MetadataCommand::new();
-    command.cargo_path(cargo()).current_dir(directory);
-    if no_deps {
-        command.no_deps();
-    } else {
-        command.features(CargoOpt::AllFeatures);
-    }
-    command
-        .exec()
-        .with_context(|| format!("cargo metadata failed in {}", directory.display()))
-}
-
-fn members(metadata: &Metadata) -> anyhow::Result<Vec<Package>> {
-    metadata
-        .workspace_packages()
-        .into_iter()
-        .map(package)
-        .collect()
-}
-
-fn package(package: &cargo_metadata::Package) -> anyhow::Result<Package> {
-    let manifest = package.manifest_path.clone().into_std_path_buf();
-    let inherited = inherited_keys(&manifest)?;
-    let dependencies = package
-        .dependencies
-        .iter()
-        .filter(|dependency| dependency.kind == DependencyKind::Normal)
-        .map(|dependency| {
-            let key = dependency.rename.as_ref().unwrap_or(&dependency.name);
-            Dependency {
-                name: dependency.name.clone(),
-                key: key.clone(),
-                target: dependency.target.as_ref().map(ToString::to_string),
-                requirement: dependency.req.clone(),
-                location: if inherited.contains(key) {
-                    Location::Inherited
-                } else {
-                    Location::Own
-                },
-            }
-        })
-        .collect();
-    let library = package
-        .targets
-        .iter()
-        .find(|target| {
-            target.kind.iter().any(|kind| {
-                matches!(
-                    kind,
-                    TargetKind::Lib | TargetKind::RLib | TargetKind::DyLib | TargetKind::ProcMacro
-                )
-            })
-        })
-        .map(|target| target.name.replace('-', "_"));
-    Ok(Package {
-        id: package.id.repr.clone(),
-        name: package.name.to_string(),
-        version: package.version.clone(),
-        library,
-        published: package
-            .publish
-            .as_ref()
-            .is_none_or(|registries| !registries.is_empty()),
-        manifest,
-        dependencies,
-    })
-}
-
-fn inherited_keys(manifest: &Path) -> anyhow::Result<BTreeSet<String>> {
-    let text = fs::read_to_string(manifest)
-        .with_context(|| format!("cannot read {}", manifest.display()))?;
-    let manifest = text
-        .parse::<toml::Table>()
-        .with_context(|| format!("cannot parse {}", manifest.display()))?;
-    let targets = manifest
-        .get("target")
-        .and_then(|targets| targets.as_table())
-        .into_iter()
-        .flat_map(|targets| targets.values())
-        .filter_map(|target| target.get("dependencies"));
-    let tables = manifest
-        .get("dependencies")
-        .into_iter()
-        .chain(targets)
-        .filter_map(|table| table.as_table());
-    let mut keys = BTreeSet::new();
-    for table in tables {
-        for (key, spec) in table {
-            let inherited = spec
-                .get("workspace")
-                .and_then(|workspace| workspace.as_bool())
-                .unwrap_or_default();
-            if inherited {
-                keys.insert(key.clone());
-            }
-        }
-    }
-    Ok(keys)
-}
-
-fn sysroot() -> anyhow::Result<PathBuf> {
-    let output = Command::new("rustc")
-        .args(["--print", "sysroot"])
-        .output()
-        .context("cannot run rustc")?;
-    if !output.status.success() {
-        bail!(
-            "rustc --print sysroot failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    let sysroot = String::from_utf8(output.stdout)?;
-    fs::canonicalize(sysroot.trim()).context("cannot resolve the sysroot")
-}
-
-fn cargo() -> OsString {
-    env::var_os("CARGO").unwrap_or_else(|| "cargo".into())
 }
 
 #[cfg(test)]

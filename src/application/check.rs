@@ -241,7 +241,7 @@ where
                 )
             })?
             .to_path_buf();
-        let mut evidences = BTreeMap::<(&str, &str), Evidence>::new();
+        let mut partial_findings = BTreeMap::<(&str, &str), PartialFinding>::new();
         for change in &changes {
             let culprits = culprits(old, new, old_library, new_library, &bumps, change);
             if culprits.is_empty() {
@@ -252,27 +252,27 @@ where
                 .into());
             }
             for bump in culprits {
-                let evidence = evidences
+                let partial_finding = partial_findings
                     .entry((bump.dependency.as_str(), change.package.as_str()))
-                    .or_insert_with(|| Evidence {
+                    .or_insert_with(|| PartialFinding {
                         bump,
                         old_versions: BTreeSet::new(),
                         new_versions: BTreeSet::new(),
                         items: Vec::new(),
                     });
-                evidence.old_versions.extend(versions(&change.old));
-                evidence.new_versions.extend(versions(&change.new));
-                evidence.items.push(change.reference.to_string());
+                partial_finding.old_versions.extend(versions(&change.old));
+                partial_finding.new_versions.extend(versions(&change.new));
+                partial_finding.items.push(change.reference.to_string());
             }
         }
-        for ((_, package), evidence) in evidences {
+        for ((_, package), partial_finding) in partial_findings {
             findings.push(Finding {
-                bump: evidence.bump.clone(),
+                bump: partial_finding.bump.clone(),
                 package: package.to_owned(),
-                old_versions: evidence.old_versions,
-                new_versions: evidence.new_versions,
-                items: evidence.items,
-                location: new_library.location(&evidence.bump.dependency),
+                old_versions: partial_finding.old_versions,
+                new_versions: partial_finding.new_versions,
+                items: partial_finding.items,
+                location: new_library.location(&partial_finding.bump.dependency),
                 manifest: manifest.clone(),
             });
         }
@@ -280,7 +280,7 @@ where
     Ok(findings)
 }
 
-struct Evidence<'a> {
+struct PartialFinding<'a> {
     bump: &'a Bump,
     old_versions: BTreeSet<Version>,
     new_versions: BTreeSet<Version>,
@@ -522,9 +522,9 @@ mod tests {
             kind: "struct".to_owned(),
         };
         let package = DefiningPackage {
+            id: format!("c {version}"),
             name: "c".to_owned(),
             version: Version::parse(version).unwrap(),
-            id: format!("c {version}"),
         };
         FakeSnapshot {
             libraries: vec![Package {

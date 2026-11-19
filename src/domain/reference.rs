@@ -22,7 +22,7 @@ impl fmt::Display for Reference {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct DefiningPackage {
+    pub(crate) id: String,
     pub(crate) name: String,
     pub(crate) version: Version,
-    pub(crate) id: String,
 }

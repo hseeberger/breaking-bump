@@ -131,9 +131,9 @@ mod tests {
                     kind: "struct".to_owned(),
                 };
                 let package = DefiningPackage {
+                    id: format!("{name} {version}"),
                     name: name.to_owned(),
                     version: Version::parse(version).unwrap(),
-                    id: format!("{name} {version}"),
                 };
                 (reference, BTreeSet::from([package]))
             })

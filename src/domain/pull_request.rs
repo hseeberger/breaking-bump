@@ -20,6 +20,13 @@ pub(crate) struct Commit {
     pub(crate) files: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PullRequestState {
+    Ready,
+    Moved,
+    Refused(Refusal),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub(crate) enum Refusal {
     #[error("the pull request is from {0}, not from a supported bot")]
@@ -42,13 +49,6 @@ pub(crate) enum Refusal {
 
     #[error("the pull request title is not conventional")]
     TitleNotConventional,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum PullRequestState {
-    Ready,
-    Moved,
-    Refused(Refusal),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -113,7 +113,7 @@ impl Repository for GitRepository {
         )?;
         let root = fs::canonicalize(temp_dir.path())?;
         Ok(GitWorktree {
-            repository: self.directory.clone(),
+            repository_root: self.root.clone(),
             directory: nearest_existing_directory(&root, &self.prefix)?,
             root,
             temp_dir,
@@ -146,7 +146,7 @@ impl Repository for GitRepository {
 }
 
 pub(crate) struct GitWorktree {
-    repository: PathBuf,
+    repository_root: PathBuf,
     root: PathBuf,
     directory: PathBuf,
     temp_dir: TempDir,
@@ -166,7 +166,7 @@ impl Drop for GitWorktree {
     fn drop(&mut self) {
         if let Some(path) = self.temp_dir.path().to_str()
             && let Err(error) = git(
-                &self.repository,
+                &self.repository_root,
                 &["worktree", "remove", "--force", path],
                 &[],
             )
