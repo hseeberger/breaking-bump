@@ -34,9 +34,9 @@ RUSTUP_TOOLCHAIN=nightly-YYYY-MM-DD path/to/cargo-breaking-bump breaking-bump ch
 
 Onion rings, one module each:
 
-- `domain`: compatibility keys, bumps, references, changes between snapshots, findings and
-  violations, settings, rules, markers, pull request preconditions and the `Bot` trait
-  (`Dependabot`).
+- `domain`: workspaces, packages and their dependencies, compatibility keys, bumps, references,
+  changes between snapshots, findings and violations, settings, rules, markers, pull request
+  preconditions and the `Bot` trait (`Dependabot`).
 - `application`: one service per subcommand (`check`, `exposed`, `mark`, `preflight`). They define
   the traits the infrastructure implements: `Cargo` and `Snapshot` (in `application/mod.rs`),
   `Repository` and `Worktree` (`check`), `Forge` (`mark`), `Toolchain` (`preflight`).
