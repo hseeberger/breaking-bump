@@ -169,11 +169,12 @@ where
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
+    let location = library.location(&dependency);
     let distinct = items.iter().collect::<BTreeSet<_>>().len();
     Exposure {
-        location: library.location(&dependency),
         dependency,
         requirements,
+        location,
         through,
         example: items
             .first()

@@ -127,12 +127,6 @@ struct FormatVersion {
     format_version: u32,
 }
 
-fn sorted<V>(map: &HashMap<Id, V>) -> Vec<(&Id, &V)> {
-    let mut entries = map.iter().collect::<Vec<_>>();
-    entries.sort_by_key(|(id, _)| **id);
-    entries
-}
-
 fn local_sites(doc: &Crate) -> HashMap<Id, String> {
     let mut parents = HashMap::new();
     for (id, item) in sorted(&doc.index) {
@@ -149,6 +143,33 @@ fn local_sites(doc: &Crate) -> HashMap<Id, String> {
         }
     }
     sites
+}
+
+fn sorted<V>(map: &HashMap<Id, V>) -> Vec<(&Id, &V)> {
+    let mut entries = map.iter().collect::<Vec<_>>();
+    entries.sort_by_key(|(id, _)| **id);
+    entries
+}
+
+fn child_ids(inner: &ItemEnum) -> Vec<Id> {
+    match inner {
+        ItemEnum::Module(module) => module.items.clone(),
+        ItemEnum::Struct(structure) => match &structure.kind {
+            StructKind::Unit => vec![],
+            StructKind::Tuple(fields) => fields.iter().flatten().copied().collect(),
+            StructKind::Plain { fields, .. } => fields.clone(),
+        },
+        ItemEnum::Union(union) => union.fields.clone(),
+        ItemEnum::Enum(enumeration) => enumeration.variants.clone(),
+        ItemEnum::Variant(variant) => match &variant.kind {
+            VariantKind::Plain => vec![],
+            VariantKind::Tuple(fields) => fields.iter().flatten().copied().collect(),
+            VariantKind::Struct { fields, .. } => fields.clone(),
+        },
+        ItemEnum::Trait(trait_) => trait_.items.clone(),
+        ItemEnum::Impl(implementation) => implementation.items.clone(),
+        _ => vec![],
+    }
 }
 
 fn site(doc: &Crate, parents: &HashMap<Id, Id>, sites: &mut HashMap<Id, String>, id: Id) -> String {
@@ -183,27 +204,6 @@ fn site(doc: &Crate, parents: &HashMap<Id, Id>, sites: &mut HashMap<Id, String>,
     };
     sites.insert(id, name.clone());
     name
-}
-
-fn child_ids(inner: &ItemEnum) -> Vec<Id> {
-    match inner {
-        ItemEnum::Module(module) => module.items.clone(),
-        ItemEnum::Struct(structure) => match &structure.kind {
-            StructKind::Unit => vec![],
-            StructKind::Tuple(fields) => fields.iter().flatten().copied().collect(),
-            StructKind::Plain { fields, .. } => fields.clone(),
-        },
-        ItemEnum::Union(union) => union.fields.clone(),
-        ItemEnum::Enum(enumeration) => enumeration.variants.clone(),
-        ItemEnum::Variant(variant) => match &variant.kind {
-            VariantKind::Plain => vec![],
-            VariantKind::Tuple(fields) => fields.iter().flatten().copied().collect(),
-            VariantKind::Struct { fields, .. } => fields.clone(),
-        },
-        ItemEnum::Trait(trait_) => trait_.items.clone(),
-        ItemEnum::Impl(implementation) => implementation.items.clone(),
-        _ => vec![],
-    }
 }
 
 fn type_text(ty: &Type, doc: &Crate) -> String {
@@ -284,6 +284,14 @@ fn without_ids(value: &Value) -> Value {
     }
 }
 
+fn variant_name(value: &Value) -> String {
+    match value {
+        Value::String(name) => name.clone(),
+        Value::Object(map) => map.keys().next().cloned().unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+
 fn referenced_positions(value: &Value) -> BTreeSet<(String, u32)> {
     let mut found = BTreeSet::new();
     let mut stack = vec![(value, String::new())];
@@ -316,14 +324,6 @@ fn referenced_positions(value: &Value) -> BTreeSet<(String, u32)> {
         }
     }
     found
-}
-
-fn variant_name(value: &Value) -> String {
-    match value {
-        Value::String(name) => name.clone(),
-        Value::Object(map) => map.keys().next().cloned().unwrap_or_default(),
-        _ => String::new(),
-    }
 }
 
 #[cfg(test)]
