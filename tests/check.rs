@@ -1,6 +1,6 @@
 mod common;
 
-use crate::common::{Fixture, Options, bin_dir, nightly, stable};
+use crate::common::{Fixture, Options, bin_dir, host, nightly, stable};
 use std::{env, process::Command};
 
 #[test]
@@ -229,6 +229,23 @@ fn cargo_config_of_the_checked_commit() {
 }
 
 #[test]
+fn configured_build_target() {
+    let mut fixture = Fixture::new();
+    let unconfigured = fixture.head();
+    fixture.write(
+        ".cargo/config.toml",
+        &format!("[build]\ntarget = \"{}\"\n", host()),
+    );
+    let configured = fixture.commit("build: configure the build target");
+    let head = fixture.bump("dep_sig", "2.0.0", "build(deps): bump dep_sig");
+    for base in [&unconfigured, &configured] {
+        fixture
+            .check(base, &head)
+            .assert(1, "breaking", "missing-marker");
+    }
+}
+
+#[test]
 fn requirement_that_is_no_plain_caret_is_undecided() {
     let mut fixture = Fixture::new();
     fixture.requirements.insert("dep_sig", "~1.0".to_owned());
@@ -389,6 +406,68 @@ fn workspace_in_a_subdirectory_of_the_repository() {
 }
 
 #[test]
+fn check_from_a_member_of_a_workspace_in_a_subdirectory() {
+    let mut fixture = Fixture::with(Options {
+        workspace: true,
+        second_member: true,
+        nested: true,
+        ..Options::default()
+    });
+    let base = fixture.head();
+    let unmarked = fixture.bump("dep_other", "2.0.0", "build(deps): bump dep_other");
+    let marked = fixture.bump("dep_other", "3.0.0", "build(deps)!: bump dep_other");
+    let member = fixture.workspace_dir().join("subject");
+    let run = fixture.run_in(&member, &["check", "--base", &base, "--head", &unmarked]);
+    run.assert(1, "breaking", "missing-marker");
+    assert!(
+        run.stdout
+            .contains("that changes other/Cargo.toml is marked"),
+        "{run}"
+    );
+    fixture
+        .run_in(&member, &["check", "--base", &base, "--head", &marked])
+        .assert(0, "breaking", "");
+}
+
+#[test]
+fn check_from_a_member_added_in_the_head_commit() {
+    let mut fixture = Fixture::with(Options {
+        workspace: true,
+        nested: true,
+        ..Options::default()
+    });
+    let base = fixture.head();
+    fixture.options.second_member = true;
+    fixture.write_all();
+    let head = fixture.commit("feat: add other");
+    let member = fixture.workspace_dir().join("other");
+    let run = fixture.run_in(&member, &["check", "--base", &base, "--head", &head]);
+    run.assert(0, "compatible", "");
+    assert!(
+        run.stdout.contains("no incompatible dependency bump"),
+        "{run}"
+    );
+}
+
+#[test]
+fn check_from_a_member_missing_in_the_head_commit() {
+    let mut fixture = Fixture::with(Options {
+        workspace: true,
+        nested: true,
+        ..Options::default()
+    });
+    let base = fixture.head();
+    let head = fixture.bump("dep_sig", "2.0.0", "build(deps): bump dep_sig");
+    fixture.options.second_member = true;
+    fixture.write_all();
+    fixture.commit("feat: add other");
+    let member = fixture.workspace_dir().join("other");
+    fixture
+        .run_in(&member, &["check", "--base", &base, "--head", &head])
+        .assert(1, "breaking", "inherited,missing-marker");
+}
+
+#[test]
 fn inherited_dependency() {
     let mut fixture = Fixture::with(Options {
         workspace: true,
@@ -510,6 +589,21 @@ fn dirty_manifest_is_reported() {
     fixture.write_all();
     let run = fixture.check(&base, &head);
     run.assert(0, "breaking", "");
+    assert!(
+        run.stderr
+            .contains("warning: Cargo.toml has uncommitted changes"),
+        "{run}"
+    );
+}
+
+#[test]
+fn broken_uncommitted_manifest_is_only_a_warning() {
+    let mut fixture = Fixture::new();
+    let base = fixture.head();
+    let head = fixture.bump("dep_sig", "2.0.0", "build(deps): bump dep_sig");
+    fixture.write("Cargo.toml", "[package\n");
+    let run = fixture.check(&base, &head);
+    run.assert(1, "breaking", "missing-marker");
     assert!(
         run.stderr
             .contains("warning: Cargo.toml has uncommitted changes"),

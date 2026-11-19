@@ -186,7 +186,7 @@ pub struct Fixture {
     pub dep_b_uses_dep_c_2: bool,
     pub dep_keep_uses_dep_c_3: bool,
     pub settings: Option<String>,
-    options: Options,
+    pub options: Options,
 }
 
 pub struct Run {
@@ -502,8 +502,15 @@ impl Fixture {
     }
 
     pub fn run(&self, args: &[&str]) -> Run {
+        self.run_in(&self.workspace_dir(), args)
+    }
+
+    pub fn run_in(&self, directory: &Path, args: &[&str]) -> Run {
         let mut command = Command::new(env!("CARGO_BIN_EXE_cargo-breaking-bump"));
-        command.arg("breaking-bump").args(args);
+        command
+            .arg("breaking-bump")
+            .args(args)
+            .current_dir(directory);
         self.execute(command, Some(nightly()))
     }
 
@@ -514,8 +521,10 @@ impl Fixture {
             Some(toolchain) => command.env("RUSTUP_TOOLCHAIN", toolchain),
             None => command.env_remove("RUSTUP_TOOLCHAIN"),
         };
+        if command.get_current_dir().is_none() {
+            command.current_dir(self.workspace_dir());
+        }
         let output = command
-            .current_dir(self.workspace_dir())
             .env_remove("CARGO")
             .env("CARGO_TARGET_DIR", self.target.path())
             .env("GITHUB_OUTPUT", &outputs)
@@ -582,6 +591,16 @@ pub fn stable() -> String {
         .split(' ')
         .nth(1)
         .expect("rustc --version has no version")
+        .to_owned()
+}
+
+pub fn host() -> String {
+    let output = Command::new("rustc").arg("-vV").output().unwrap();
+    let version = String::from_utf8(output.stdout).unwrap();
+    version
+        .lines()
+        .find_map(|line| line.strip_prefix("host: "))
+        .expect("rustc -vV reports no host")
         .to_owned()
 }
 

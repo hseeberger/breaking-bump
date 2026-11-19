@@ -13,14 +13,17 @@ use tempfile::TempDir;
 
 pub(crate) struct GitRepository {
     directory: PathBuf,
+    root: PathBuf,
     prefix: PathBuf,
 }
 
 impl GitRepository {
     pub(crate) fn open(directory: &Path) -> anyhow::Result<Self> {
+        let root = git(directory, &["rev-parse", "--show-toplevel"], &[])?;
         let prefix = git(directory, &["rev-parse", "--show-prefix"], &[])?;
         Ok(Self {
             directory: directory.to_path_buf(),
+            root: PathBuf::from(root),
             prefix: PathBuf::from(prefix),
         })
     }
@@ -28,6 +31,10 @@ impl GitRepository {
 
 impl Repository for GitRepository {
     type Worktree = GitWorktree;
+
+    fn root(&self) -> &Path {
+        &self.root
+    }
 
     fn commit(&self, revision: &str) -> anyhow::Result<String> {
         let revision = format!("{revision}^{{commit}}");
@@ -56,31 +63,46 @@ impl Repository for GitRepository {
     }
 
     fn changed_paths(&self, from: &str, to: &str) -> anyhow::Result<Vec<String>> {
-        let paths = git(&self.directory, &["diff", "--name-only", from, to], &[])?;
-        Ok(paths.lines().map(str::to_owned).collect())
+        let paths = git(
+            &self.directory,
+            &["diff", "--name-only", "-z", from, to],
+            &[],
+        )?;
+        Ok(paths
+            .split('\0')
+            .filter(|path| !path.is_empty())
+            .map(str::to_owned)
+            .collect())
     }
 
     fn dirty_manifests(&self) -> anyhow::Result<Vec<String>> {
         let status = git(
             &self.directory,
-            &["status", "--porcelain", "--untracked-files=all"],
+            &["status", "--porcelain", "-z", "--untracked-files=all"],
             &[],
         )?;
-        Ok(status
-            .lines()
-            .filter_map(|line| line.get(3..))
-            .map(|path| path.rsplit(" -> ").next().unwrap_or(path))
-            .filter(|path| is_manifest(Path::new(path)))
-            .map(str::to_owned)
-            .collect())
+        let mut fields = status.split('\0').filter(|field| !field.is_empty());
+        let mut manifests = Vec::new();
+        while let Some(entry) = fields.next() {
+            let (Some(code), Some(path)) = (entry.get(..2), entry.get(3..)) else {
+                continue;
+            };
+            if code.contains(['R', 'C']) {
+                fields.next();
+            }
+            if is_manifest(Path::new(path)) {
+                manifests.push(path.to_owned());
+            }
+        }
+        Ok(manifests)
     }
 
     fn worktree(&self, commit: &str) -> anyhow::Result<GitWorktree> {
-        let directory = tempfile::Builder::new()
+        let temp_dir = tempfile::Builder::new()
             .prefix("breaking-bump-")
             .tempdir()
             .context("cannot create a temporary directory")?;
-        let path = directory
+        let path = temp_dir
             .path()
             .to_str()
             .context("temporary path is no UTF-8")?;
@@ -89,17 +111,19 @@ impl Repository for GitRepository {
             &["worktree", "add", "--quiet", "--detach", path, commit],
             &[],
         )?;
-        let root = fs::canonicalize(directory.path())?;
+        let root = fs::canonicalize(temp_dir.path())?;
         Ok(GitWorktree {
             repository: self.directory.clone(),
-            workspace: root.join(&self.prefix),
-            directory,
+            directory: nearest_existing_directory(&root, &self.prefix)?,
+            root,
+            temp_dir,
         })
     }
 
     fn messages(&self, from: &str, to: &str, path: &Path) -> anyhow::Result<Vec<String>> {
         let range = format!("{from}..{to}");
         let path = path.to_str().context("manifest path is no UTF-8")?;
+        let pathspec = format!(":(top,literal){path}");
         let log = git(
             &self.directory,
             &[
@@ -108,7 +132,7 @@ impl Repository for GitRepository {
                 "--format=%B%x00",
                 &range,
                 "--",
-                path,
+                &pathspec,
             ],
             &[],
         )?;
@@ -123,19 +147,24 @@ impl Repository for GitRepository {
 
 pub(crate) struct GitWorktree {
     repository: PathBuf,
-    workspace: PathBuf,
-    directory: TempDir,
+    root: PathBuf,
+    directory: PathBuf,
+    temp_dir: TempDir,
 }
 
 impl Worktree for GitWorktree {
-    fn workspace(&self) -> &Path {
-        &self.workspace
+    fn root(&self) -> &Path {
+        &self.root
+    }
+
+    fn directory(&self) -> &Path {
+        &self.directory
     }
 }
 
 impl Drop for GitWorktree {
     fn drop(&mut self) {
-        if let Some(path) = self.directory.path().to_str()
+        if let Some(path) = self.temp_dir.path().to_str()
             && let Err(error) = git(
                 &self.repository,
                 &["worktree", "remove", "--force", path],
@@ -238,7 +267,24 @@ pub(crate) fn push_with_lease(
     if stdout.contains("(stale info)") || stderr.contains("(stale info)") {
         return Ok(false);
     }
-    bail!("git push failed: {}{}", stdout.trim(), stderr.trim())
+    let diagnostic = [stdout.trim(), stderr.trim()]
+        .into_iter()
+        .filter(|stream| !stream.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    bail!("git push failed: {diagnostic}")
+}
+
+fn nearest_existing_directory(root: &Path, prefix: &Path) -> anyhow::Result<PathBuf> {
+    let mut directory = root.join(prefix);
+    while directory != root
+        && !directory
+            .try_exists()
+            .with_context(|| format!("cannot access {}", directory.display()))?
+    {
+        directory.pop();
+    }
+    Ok(directory)
 }
 
 #[cfg(test)]
@@ -349,10 +395,49 @@ mod tests {
         let directory = TempDir::new().unwrap();
         let repository = GitRepository {
             directory: directory.path().to_path_buf(),
+            root: directory.path().to_path_buf(),
             prefix: PathBuf::new(),
         };
         let error = repository.default_base().unwrap_err().to_string();
         assert!(error.contains("exit status: 128"), "{error}");
+    }
+
+    #[test]
+    fn quoted_manifest_paths_are_found() {
+        let directory = repository();
+        let path = directory.path();
+        git(path, &["config", "core.quotePath", "true"], &[]).unwrap();
+        fs::create_dir(path.join("ü")).unwrap();
+        fs::write(path.join("ü").join("Cargo.toml"), "[package]\n").unwrap();
+        let base = git(path, &["rev-parse", "HEAD"], &[]).unwrap();
+        git(path, &["add", "--all"], &[]).unwrap();
+        let head = commit(path, "feat: add a manifest");
+        fs::write(
+            path.join("ü").join("Cargo.toml"),
+            "[package]\nname = \"x\"\n",
+        )
+        .unwrap();
+
+        let repository = GitRepository::open(path).unwrap();
+        assert_eq!(
+            repository.changed_paths(&base, &head).unwrap(),
+            ["ü/Cargo.toml"]
+        );
+        assert_eq!(repository.dirty_manifests().unwrap(), ["ü/Cargo.toml"]);
+    }
+
+    #[test]
+    fn a_renamed_manifest_is_reported_once() {
+        let directory = repository();
+        let path = directory.path();
+        fs::create_dir(path.join("old")).unwrap();
+        fs::write(path.join("old").join("Cargo.toml"), "[package]\n").unwrap();
+        git(path, &["add", "--all"], &[]).unwrap();
+        commit(path, "feat: add a manifest");
+        git(path, &["mv", "old", "new"], &[]).unwrap();
+
+        let repository = GitRepository::open(path).unwrap();
+        assert_eq!(repository.dirty_manifests().unwrap(), ["new/Cargo.toml"]);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 mod common;
 
-use crate::common::{Fixture, Options};
+use crate::common::{Fixture, Options, host};
 
 #[test]
 fn exposed_dependencies() {
@@ -49,6 +49,18 @@ fn location_of_inherited_dependencies() {
     let run = fixture.run(&["exposed", "-p", "subject"]);
     assert_eq!(run.code, 0, "{run}");
     assert!(run.stdout.contains("  dep_sig ^1.0.0 (inherited)"), "{run}");
+}
+
+#[test]
+fn configured_build_target() {
+    let fixture = Fixture::new();
+    fixture.write(
+        ".cargo/config.toml",
+        &format!("[build]\ntarget = \"{}\"\n", host()),
+    );
+    let run = fixture.run(&["exposed"]);
+    assert_eq!(run.code, 0, "{run}");
+    assert!(run.stdout.contains("  dep_sig ^1.0.0 (own)"), "{run}");
 }
 
 #[test]

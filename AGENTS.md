@@ -57,6 +57,17 @@ Things that are easy to break:
   differ between worktrees). Attribution to a bump uses package IDs.
 - The reference walk serializes `item.inner` to JSON on purpose, so a field added to rustdoc's
   format is not missed.
+- A dependency's declarations are compared by manifest key, target and requirement, so two aliases
+  or two targets that swap majors count as a change.
+- The rustdoc JSON path comes from cargo's artifact message, since a configured build target moves
+  the file.
+- Finding manifests are relative to Cargo's workspace root and the marker search path to the Git
+  root; the two differ for a workspace in a subdirectory.
+- `check` runs cargo only in the worktrees, never in the working copy, so a broken uncommitted
+  manifest only causes a warning.
+- The head workspace is resolved from the nearest ancestor of the invocation directory that exists
+  in the head commit, the merge-base workspace at the head workspace's root. The invocation
+  directory may exist in neither commit.
 - The marker search uses `git log --full-history`; without it a merge hides a marked commit on its
   second parent.
 - `mark` changes the title before it pushes, so a retry can finish an interrupted run.

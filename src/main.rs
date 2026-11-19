@@ -115,14 +115,15 @@ fn report(args: &CheckArgs) -> Report {
         .and_then(|()| current_dir())
         .and_then(|directory| {
             let repository = GitRepository::open(&directory)?;
-            Ok((repository, target_dir(&directory)))
+            Ok((repository, given_target_dir(&directory)))
         });
     match prepared {
         Ok((repository, target_dir)) => check::check(
             &repository,
-            &CargoCli::new(target_dir),
+            &CargoCli,
             args.base.as_deref(),
             &args.head,
+            target_dir.as_deref(),
         ),
         Err(error) => Report::error(error),
     }
@@ -132,11 +133,8 @@ fn current_dir() -> anyhow::Result<PathBuf> {
     env::current_dir().context("cannot determine the current directory")
 }
 
-fn target_dir(directory: &Path) -> PathBuf {
-    match env::var_os("CARGO_TARGET_DIR") {
-        Some(target_dir) => directory.join(target_dir),
-        None => directory.join("target").join("breaking-bump"),
-    }
+fn given_target_dir(directory: &Path) -> Option<PathBuf> {
+    env::var_os("CARGO_TARGET_DIR").map(|target_dir| directory.join(target_dir))
 }
 
 fn print_report(report: &Report) {
@@ -246,7 +244,7 @@ fn run_mark(args: MarkArgs) -> ExitCode {
                 args.head
             );
             if title_marked {
-                println!("the pull request title already has the `!`");
+                println!("check whether the `!` still belongs in the pull request title");
             }
             ExitCode::SUCCESS
         }
@@ -281,8 +279,12 @@ fn run_exposed(args: ExposedArgs) -> ExitCode {
 fn audit(args: &ExposedArgs) -> anyhow::Result<Audit> {
     preflight::preflight(&ActiveToolchain, rustdoc::FORMAT_VERSION)?;
     let directory = current_dir()?;
-    let cargo = CargoCli::new(target_dir(&directory));
-    exposed::exposed(&cargo, &directory, &args.packages)
+    exposed::exposed(
+        &CargoCli,
+        &directory,
+        &args.packages,
+        given_target_dir(&directory).as_deref(),
+    )
 }
 
 fn print_audit(audit: &Audit) {

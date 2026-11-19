@@ -7,6 +7,7 @@ use std::{
 
 #[derive(Debug, Clone)]
 pub(crate) struct Workspace {
+    pub(crate) root: PathBuf,
     pub(crate) members: Vec<Package>,
     pub(crate) metadata: Value,
 }
@@ -48,6 +49,8 @@ impl Package {
 #[derive(Debug, Clone)]
 pub(crate) struct Dependency {
     pub(crate) name: String,
+    pub(crate) key: String,
+    pub(crate) target: Option<String>,
     pub(crate) requirement: VersionReq,
     pub(crate) location: Location,
 }
