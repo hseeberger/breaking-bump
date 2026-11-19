@@ -23,7 +23,7 @@ pub(crate) trait Cargo {
 pub(crate) trait Snapshot {
     fn libraries(&self) -> &[Package];
 
-    // Fails with `Undecided` when a crate cannot be mapped to a package.
+    // Fails with `Undecided` when a crate cannot be mapped to a package or site names collide.
     fn api_items(&self, library: &Package) -> anyhow::Result<ApiItems>;
 
     // Fails with `Undecided` when a crate cannot be mapped to a package.

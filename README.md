@@ -250,8 +250,9 @@ cargo +nightly-2026-11-09 breaking-bump exposed [-p <crate>]...
 `exposed` lists, for each published library crate of the working tree, the normal dependencies
 that appear in its public API, with their requirement, their location, an example item and the
 number of further items. A dependency that exposes items of a crate reached through it names that
-crate, too. It exits with 0 when the audit is complete, with 2 when a crate cannot be mapped to a
-package (the rest is still listed) and with 3 for errors.
+crate, too. It exits with 0 when the audit is complete, with 2 when a crate in the public API
+cannot be mapped to a package or attributed to a dependency (the rest is still listed) and with 3
+for errors.
 
 ## mark
 
@@ -261,7 +262,9 @@ cargo breaking-bump mark --pr <number> --head <commit> [--repository <owner/name
 
 `mark` adds the `!` to a Dependabot pull request whose head commit `check` examined. It reads a
 token from `GH_TOKEN` or `GITHUB_TOKEN` and the repository from `GITHUB_REPOSITORY` unless given.
-It never checks out or builds the pull request, and it needs no nightly.
+It uses the REST API at `GITHUB_API_URL` (by default `https://api.github.com`) and pushes to
+`GITHUB_SERVER_URL` (by default `https://github.com`). It never checks out or builds the pull
+request, and it needs no nightly.
 
 It only acts on a pull request from Dependabot in the same repository, with a single-parent head
 commit that changes a `Cargo.toml` and has a conventional, unmarked subject, and with a
