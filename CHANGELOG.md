@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.4](https://github.com/hseeberger/breaking-bump/compare/v0.1.3...v0.1.4) - 2026-11-19
+
+### Features
+
+- Add a GitHub action with check and mark commands ([#25](https://github.com/hseeberger/breaking-bump/pull/25))
+
+
 ## [0.1.3](https://github.com/hseeberger/breaking-bump/compare/v0.1.2...v0.1.3) - 2026-11-19
 
 ### Documentation
