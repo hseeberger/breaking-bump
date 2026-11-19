@@ -19,8 +19,9 @@ API of the crate, although not a single line of its own code changes. Dependabot
 such a bump as breaking and cargo-semver-checks does not detect it, so a release tool like
 release-plz proposes a non-breaking release.
 
-breaking-bump detects these bumps. It is a Cargo subcommand, and it comes with a reusable GitHub
-workflow that checks every pull request and adds the breaking marker to Dependabot pull requests.
+breaking-bump detects these bumps. It is a Cargo subcommand, published as the crate
+`cargo-breaking-bump`. It comes with a reusable GitHub workflow that checks every pull request and
+adds the breaking marker to Dependabot pull requests.
 
 ## The problem, on a real pull request
 
