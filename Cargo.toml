@@ -11,6 +11,11 @@ categories  = [ "development-tools::cargo-plugins" ]
 include     = [ "src/**", "tests/**", "README.md", "LICENSE", "CHANGELOG.md" ]
 publish     = true
 
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.tar.gz"
+pkg-fmt = "tgz"
+bin-dir = "{ bin }{ binary-ext }"
+
 [dependencies]
 anyhow         = { version = "1.0" }
 base64         = { version = "0.23" }
